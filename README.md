@@ -104,6 +104,34 @@ Interrupted? The same command with `--resume`. Second sheet: new run folder, new
 Rehearsal without the robot: `--plant replay --replay-run <a recorded run folder with pointcloud_pass0..k>` replays
 the recorded captures as if the robot had produced them.
 
+## 3b. The Dobot cell, fully automatic (2026-10-28, `--plant dobot`)
+
+`robot_dobot/run_toolpath_dobot.py` runs Danish's own driver (`English-Wheel---DoBot-Files/Scripts/run_zigzag_oldclamps.py`)
+with our `toolpath.json`: his `plan_zigzag` is replaced by the file's pivots in memory, his sheet constants are set
+from the file's sheet block (his per-pivot safety check then runs on our sheet and zone), `NUM_PASSES` = the block's
+passes. Nothing in his folder is edited. His flow is kept: a scan after every pass, his Rx/Rz prompt between passes
+(press Enter to keep; `--auto-radii` skips it). Start it from a terminal ON THE DESKTOP (his force monitors are Tk
+windows), with the sheet gripped and the cameras on:
+
+```
+cd C:\Users\Ping Guo Lab\english-wheel-closed-loop\real_testbed
+C:\anaconda3\envs\EnglishWheel\python.exe -m ew_loop.cli rigloop --plant dobot ^
+    --robot-scripts "C:\Users\Ping Guo Lab\Documents\GitHub\English-Wheel---DoBot-Files\Scripts" ^
+    --server http://localhost:8765 --target figures/rig/targets/S1_t042_c4.npz --out loops/sheet01 ^
+    --calib "pc_post_processing/deliverable_092826/calibration results" --clamp 12 --n 3 --max-passes 12
+```
+
+What happens: (1) his driver connects, goes to the scan pose, takes `pointcloud_pass0`, parks at pos_9, disconnects;
+the loop prints `reference:` and writes `loops/sheet01/round_00/reference/reference_preview.png`. (2) Each round:
+the loop prints the plan, writes `round_0N/toolpath.json` + `preview.png`, asks `execute round N? [y/N]`; on `y` his
+driver runs the block (his safety check and preview first, then approach, load, the passes with a scan after each,
+unload) and the loop measures the last scan. (3) It stops by itself and writes `summary.png`.
+`round_0N/robot/robot_run.json` records his run folder (`Scripts/outputs/<timestamp>/`) for every block.
+Dry run without the robot: `python robot_dobot/run_toolpath_dobot.py check <toolpath.json> --scripts <Scripts> --out <dir>`
+(his safety check and his preview of our path; verified 2026-10-28 on the robot PC).
+The model: `--server http://localhost:8765` is the service on ideas2 through a reverse ssh tunnel opened FROM ideas2
+(`ssh -N -R 8765:localhost:8765 "Ping Guo Lab@10.105.33.14"`); the robot PC itself cannot open port 8765 on ideas2.
+
 ## 4. The pieces, and what is replaceable
 
 | piece | file | interface |

@@ -33,6 +33,26 @@ goes to the scan pose ONCE, one capture, measure, re-plan. The capture folder in
 passes. If the robot side captures after every pass anyway, the loop measures every new folder for the record and
 takes the last one as the block's measurement.
 
+## 1b. In the lab, 2026-10-28 evening: what is set up on the robot PC (ssh from ideas2 works)
+
+Robot PC `ME-B111-01`, Windows 11, user `Ping Guo Lab`, campus IP 10.105.33.14, sshd installed, ideas2's key
+accepted: `ssh "Ping Guo Lab@10.105.33.14"` from ideas2 (scp TO it works; FROM it stream with `ssh ... tar`).
+RTX A2000 6 GB (desktop uses 2.3 GB) -> the model stays on ideas2 (GPU 3, `serve-fields`), reached through a reverse
+tunnel opened from ideas2: `ssh -N -R 8765:localhost:8765 "Ping Guo Lab@10.105.33.14"` (the robot PC cannot reach
+ideas2:8765 directly; port 22 only). Our repo is cloned at `C:\Users\Ping Guo Lab\english-wheel-closed-loop` and
+runs in his conda env `EnglishWheel` (python 3.10, numpy/scipy/matplotlib/cv2 present; nothing installed).
+Verified there: controller/spec/frames tests, the geometry against his DoBot `zigzag_planner.py` (54 toolpaths,
+max 0.0006 mm), the replay rehearsal on his own 10-21 run through the tunnel (bit-identical to ideas2), and
+`run_toolpath_dobot.py check` (his safety check accepts our S1_t042 toolpath on the 231 x 174 sheet with margins
+43.4 side / 12 top; his preview drawn; his folder untouched).
+
+The robot is a Dobot CR5A now; his live code is `Documents\GitHub\English-Wheel---DoBot-Files\Scripts`
+(`run_zigzag_oldclamps.py` -> `zigzag_forming_oldclamps.py`): scan pose `pointcloud_position`, `pointcloud_pass0`,
+then NUM_PASSES passes alternating L->R / R->L with unload + scan + Rx/Rz prompt after every pass; one
+`outputs/<timestamp>/` per driver run. His constants were the previous sheet (232 x 124, margin 60.4): the adapter
+sets ours from the toolpath file at run time. Plan A on site = `rigloop --plant dobot` (`ROBOT_PC.md` 3b), no file
+copying at all; plan A' = `--plant file --captures <his run folder>` if his driver must be run by hand.
+
 ## 2. Before leaving (ideas2)
 
 ```
