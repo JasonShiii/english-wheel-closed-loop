@@ -183,7 +183,7 @@ def cmd_rigloop(a):
     from . import loop as L, measure as ME, model_newsheet as MN
     profile = MN.NewsheetModel(pairs=a.pairs or MN.DEFAULT_PAIRS, data=a.data or MN.DEFAULT_DATA)
     sheet = Sheet(width_mm=231.0, length_mm=174.0, thickness_mm=0.6, clamp_mm=a.clamp, margin_side_mm=a.margin_side,
-                  margin_bottom_mm=0.0, pad_offsets_from_left_mm=(6.5, 224.5), pad_diameter_mm=13.0)
+                  margin_bottom_mm=0.0, margin_top_mm=a.margin_top, pad_offsets_from_left_mm=(6.5, 224.5), pad_diameter_mm=13.0)
     if a.fixed_plan:
         planner = P.FixedFieldsPlanner(a.fixed_plan, profile)
     elif a.server:

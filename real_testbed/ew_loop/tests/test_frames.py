@@ -22,6 +22,10 @@ def test_frames():
     assert np.allclose(s.to_planner([0.0, s.wheel_line_y]), [0.0, 0.0])          # wheel line = planner Y 0
     assert np.allclose(s.to_planner([0.0, s.length_mm / 2]), [0.0, s.usable_length_mm])
     assert s.safe_zone_planner() == zp.safe_zone_bounds(s.width_mm, s.usable_length_mm, s.margin_side_mm, s.margin_bottom_mm)
+    if "margin_top" in zp.safe_zone_bounds.__code__.co_varnames:          # the Dobot planner's form with its own top margin
+        t = Sheet(width_mm=231.0, length_mm=174.0, thickness_mm=0.6, clamp_mm=12.0, margin_side_mm=43.4, margin_bottom_mm=0.0, margin_top_mm=12.0)
+        assert t.safe_zone_planner() == zp.safe_zone_bounds(t.width_mm, t.length_mm, t.margin_side_mm, t.margin_bottom_mm, t.margin_top_mm, t.clamp_mm), \
+            (t.safe_zone_planner(), zp.safe_zone_bounds(t.width_mm, t.length_mm, t.margin_side_mm, t.margin_bottom_mm, t.margin_top_mm, t.clamp_mm))
     assert Sheet.from_dict(s.to_dict()) == s and Sheet.parse("195x190", 100.0, 1.0) == s
     px = [p[0] for p in s.pad_centres()]
     assert abs(px[0] + 84.8) < 1e-9 and abs(px[1] - 86.65) < 1e-9

@@ -42,8 +42,9 @@ class Sheet:
                                      # wheel cannot reach (robot SHEET_BOTTOM_TO_WHEEL_LINE_MM, 100 on oct_2_demo,
                                      # 85 before). NOT the gripper size (pads are 14 mm). Unverified for the 190 mm
                                      # sheet: their comment says it was set on a 300 x 200 sheet -> measure on the machine.
-    margin_side_mm: float = 12.0     # robot MARGIN_SIDE_MM: kept clear on the left, right and far edges
+    margin_side_mm: float = 12.0     # robot MARGIN_SIDE_MM: kept clear on the left and right edges
     margin_bottom_mm: float = 0.0    # robot MARGIN_BOTTOM_MM: kept clear on the wheel-line side
+    margin_top_mm: float = None      # robot MARGIN_TOP_MM (Dobot planner, 2026-10): kept clear on the far edge; None = margin_side
     # gripper pads (robot zigzag_planner.GRIPPER_1_X_MM / GRIPPER_2_X_MM, offsets from the left edge)
     pad_offsets_from_left_mm: tuple = (12.7, 184.15)
     pad_diameter_mm: float = 13.98
@@ -66,12 +67,14 @@ class Sheet:
                 for off in self.pad_offsets_from_left_mm]
 
     def safe_zone_planner(self):
-        """(x_min, x_max, y_min, y_max) in the planner frame — identical to
-        zigzag_planner.safe_zone_bounds(X_DIM_MM, Y_DIM_EFFECTIVE_MM, MARGIN_SIDE_MM, MARGIN_BOTTOM_MM)."""
+        """(x_min, x_max, y_min, y_max) in the planner frame — identical to zigzag_planner.safe_zone_bounds(
+        X_DIM_MM, Y_DIM_MM, MARGIN_SIDE_MM, MARGIN_BOTTOM_MM, MARGIN_TOP_MM, SHEET_BOTTOM_TO_WHEEL_LINE_MM)
+        (Dobot planner; the older 4-argument form = margin_top None)."""
+        top = self.margin_side_mm if self.margin_top_mm is None else self.margin_top_mm
         return (-self.width_mm / 2.0 + self.margin_side_mm,
                 self.width_mm / 2.0 - self.margin_side_mm,
                 self.margin_bottom_mm,
-                self.usable_length_mm - self.margin_side_mm)
+                self.usable_length_mm - top)
 
     def safe_zone_sheet(self):
         x0, x1, y0, y1 = self.safe_zone_planner()

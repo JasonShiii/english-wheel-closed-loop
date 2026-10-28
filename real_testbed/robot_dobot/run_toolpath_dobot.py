@@ -45,7 +45,8 @@ def configure(zf, zp, doc, tp, mode, margin_top, auto_radii):
     zf.X_DIM_MM = float(sheet["width_mm"]); zf.Y_DIM_MM = float(sheet["length_mm"])
     zf.SHEET_BOTTOM_TO_WHEEL_LINE_MM = float(sheet["clamp_mm"])
     zf.Y_DIM_EFFECTIVE_MM = zf.Y_DIM_MM - zf.SHEET_BOTTOM_TO_WHEEL_LINE_MM
-    zf.MARGIN_SIDE_MM = float(sheet["margin_side_mm"]); zf.MARGIN_BOTTOM_MM = float(sheet["margin_bottom_mm"]); zf.MARGIN_TOP_MM = float(margin_top)
+    zf.MARGIN_SIDE_MM = float(sheet["margin_side_mm"]); zf.MARGIN_BOTTOM_MM = float(sheet["margin_bottom_mm"])
+    zf.MARGIN_TOP_MM = float(sheet["margin_top_mm"] if sheet.get("margin_top_mm") is not None else margin_top)
     zf.ZIGZAG_LV_MM = float(rb["zigzag_lv_mm"]); zf.ZIGZAG_ALPHA_DEG = float(rb["zigzag_alpha_deg"]); zf.ZIGZAG_N = int(rb["zigzag_N"])
     zf.ZIGZAG_ROTATION_DEG = float(rb["rotation_deg"]); zf.ZIGZAG_START_MM = float(rb["start_mm"])
     zf.ZIGZAG_WIDTH_MM = round(max(x for x, _ in piv) - min(x for x, _ in piv), 1)
