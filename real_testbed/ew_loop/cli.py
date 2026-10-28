@@ -190,7 +190,12 @@ def cmd_rigloop(a):
         planner = P.HttpFieldsPlanner(a.server); print("server:", planner.health())
     else:
         planner = P.ModelPlanner(a.ckpt or MN.DEFAULT_CKPT, profile); print(f"model loaded in {planner.load_secs:.0f}s")
-    plant = L.ReplayPlant(a.replay_run) if a.plant == "replay" else L.FilePlant(a.exchange, a.captures)
+    if a.plant == "replay":
+        plant = L.ReplayPlant(a.replay_run)
+    elif a.plant == "dobot":
+        plant = L.DobotPlant(a.robot_scripts, python=a.robot_python, margin_top=a.margin_top, auto_radii=a.auto_radii)
+    else:
+        plant = L.FilePlant(a.exchange, a.captures)
     measurer = ME.RigMeasurer(calib_dir=a.calib)
     st = L.run_loop(a.out, sheet, a.target, planner, plant, n=a.n, max_passes=a.max_passes, allow_rot90=False,
                     confirm=not a.yes, robust=True, resume=a.resume, measurer=measurer, profile=profile)
@@ -266,14 +271,18 @@ def main(argv=None):
     rl.add_argument("--out", required=True)
     rl.add_argument("--ckpt", help="new-sheet checkpoint (default: free_aug_e8/checkpoint-1832)"); rl.add_argument("--server", help="URL of `serve-fields`")
     rl.add_argument("--fixed-plan", help="plan JSON instead of a model")
-    rl.add_argument("--plant", choices=["file", "replay"], default="file")
+    rl.add_argument("--plant", choices=["file", "replay", "dobot"], default="file")
+    rl.add_argument("--robot-scripts", help="(dobot) Danish's Scripts folder (English-Wheel---DoBot-Files/Scripts)")
+    rl.add_argument("--robot-python", help="(dobot) python for his driver (default: this one)")
+    rl.add_argument("--auto-radii", action="store_true", help="(dobot) skip his Rx/Rz prompt between passes")
+    rl.add_argument("--margin-top", type=float, default=12.0, help="robot MARGIN_TOP_MM (far-edge strip the wheel cannot reach)")
     rl.add_argument("--exchange", help="(file) folder shared with the robot side: round_NN/toolpath.json out, captures/pointcloud_pass<k> in")
     rl.add_argument("--captures", help="(file) folder where the capture folders pointcloud_pass<k> appear, e.g. the robot software's "
                                        "run folder when the loop runs on the robot PC (default <exchange>/captures)")
     rl.add_argument("--replay-run", help="(replay) recorded run folder with pointcloud_pass0..k")
     rl.add_argument("--calib", help="rig calibration folder (default: the 09-28 deliverable)")
     rl.add_argument("--clamp", type=float, default=12.0, help="robot SHEET_BOTTOM_TO_WHEEL_LINE_MM for this sheet (assumed 12; confirm)")
-    rl.add_argument("--margin-side", type=float, default=12.0, help="robot MARGIN_SIDE_MM")
+    rl.add_argument("--margin-side", type=float, default=43.4, help="robot MARGIN_SIDE_MM (43.4 = the model's reachable zone, x within +-72.1)")
     rl.add_argument("--pairs"); rl.add_argument("--data")
     rl.add_argument("--n", type=int, default=3, help="most passes per block before re-planning")
     rl.add_argument("--max-passes", type=int, default=12); rl.add_argument("--yes", action="store_true"); rl.add_argument("--resume", action="store_true")
@@ -295,6 +304,8 @@ def main(argv=None):
             ap.error("--plant file needs --exchange DIR and/or --captures DIR")
         if a.plant == "replay" and not a.replay_run:
             ap.error("--plant replay needs --replay-run DIR")
+        if a.plant == "dobot" and not a.robot_scripts:
+            ap.error("--plant dobot needs --robot-scripts DIR")
     return a.f(a) or 0
 
 

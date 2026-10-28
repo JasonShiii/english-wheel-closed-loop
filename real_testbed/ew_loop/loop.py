@@ -9,6 +9,8 @@ Interchangeable plants execute a toolpath.json and return captures:
   FilePlant   (rig, 2026-10-28) the robot side runs the block and captures ONCE at the scan pose;
               the loop waits for the capture folder (MPC-like cadence: one measurement per block)
   ReplayPlant (rehearsal) returns the recorded capture of a run folder after the block's passes
+  DobotPlant  (rig, 2026-10-28) Danish's Dobot driver through robot_dobot/run_toolpath_dobot.py: the whole
+              block without an operator copying anything; his driver scans after every pass
 
 Every round is written to OUT/round_NN/ (model inputs and answer, toolpath.json and preview,
 the measured field after every pass); OUT/state.json holds the bookkeeping, so a run can be
@@ -238,6 +240,53 @@ class FilePlant:
         caps = [Capture(tp["id"], k, None, pass_dir=self._pd(self.captures, k)) for k in new]
         self.k = new[-1]
         return caps, executed
+
+    def state(self):
+        return {"k": self.k}
+
+    def restore(self, d):
+        self.k = d.get("k", 0)
+
+
+class DobotPlant:
+    """the Dobot CR5A cell (2026-10-28) through Danish's own driver, run by robot_dobot/run_toolpath_dobot.py
+    in this Python with cwd = his Scripts folder. baseline() = scan pose + flat scan (pointcloud_pass0);
+    execute() = the block: his driver runs the passes and scans after EVERY pass (his tested flow; the operator
+    answers his Rx/Rz prompt between passes unless auto_radii), every capture is returned and the loop takes
+    the last one as the block's measurement. Capture index = capture count of the session."""
+    ADAPTER = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "robot_dobot", "run_toolpath_dobot.py")
+
+    def __init__(self, scripts, python=None, margin_top=12.0, auto_radii=False):
+        self.scripts, self.python, self.margin_top, self.auto_radii = os.path.abspath(scripts), python or sys.executable, margin_top, auto_radii
+        self.k = 0
+        if not os.path.exists(os.path.join(self.scripts, "run_zigzag_oldclamps.py")):
+            raise FileNotFoundError(f"{self.scripts}: run_zigzag_oldclamps.py not found")
+
+    def _run(self, mode, round_dir, toolpath=None):
+        out = os.path.join(round_dir, "robot"); os.makedirs(out, exist_ok=True)
+        cmd = [self.python, self.ADAPTER, mode] + ([toolpath] if toolpath else []) + ["--scripts", self.scripts, "--out", out,
+                                                                                      "--margin-top", str(self.margin_top)] + (["--auto-radii"] if self.auto_radii else [])
+        print("  >>> " + " ".join(f'"{c}"' if " " in c else c for c in cmd), flush=True)
+        r = subprocess.run(cmd, cwd=self.scripts)
+        p = os.path.join(out, "robot_run.json")
+        if not os.path.exists(p):
+            raise RuntimeError(f"robot adapter exited {r.returncode} without {p}")
+        res = json.load(open(p))
+        if not res.get("ok"):
+            raise RuntimeError(f"robot {mode} failed: {res.get('error')} (captures {sorted(res.get('captures', {}))}, run folder {res.get('output_dir')})")
+        return res
+
+    def baseline(self, round_dir):
+        res = self._run("baseline", round_dir)
+        return Capture(None, 0, None, pass_dir=res["captures"]["0"])
+
+    def execute(self, doc, round_dir):
+        res = self._run("run", round_dir, os.path.join(round_dir, "toolpath.json"))
+        tp, caps = doc["toolpaths"][0], []
+        for j in sorted(int(k) for k in res["captures"] if int(k) > 0):
+            self.k += 1
+            caps.append(Capture(tp["id"], self.k, None, pass_dir=res["captures"][str(j)]))
+        return caps, int(res.get("passes_done", len(caps)))
 
     def state(self):
         return {"k": self.k}
