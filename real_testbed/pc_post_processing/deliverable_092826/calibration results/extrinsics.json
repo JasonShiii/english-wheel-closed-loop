@@ -1,0 +1,439 @@
+{
+  "reference_frame": "device_1_ir_left",
+  "units": "mm",
+  "convention": "X_ref = T_ref_from_camera @ X_camera",
+  "serials": [
+    "CP1E54200059",
+    "CP1E5420006G",
+    "CP1E5420006V"
+  ],
+  "source_run": "run_20260928_131545_743086",
+  "board": {
+    "inner_corners": [
+      11,
+      8
+    ],
+    "square_size_mm": 20.0
+  },
+  "devices": {
+    "device_1": [
+      [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        1.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        1.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    ],
+    "device_2": [
+      [
+        -0.7746894512688292,
+        -0.47536198788862716,
+        0.4169978831641356,
+        -201.529599569452
+      ],
+      [
+        0.5948768873407607,
+        -0.32425072660783427,
+        0.7355154350535801,
+        -467.87992925003795
+      ],
+      [
+        -0.21442421271993833,
+        0.8178584515457806,
+        0.5339754771846473,
+        302.1070380176918
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    ],
+    "device_3": [
+      [
+        -0.4680294420304967,
+        0.768262069026048,
+        -0.4367171105972793,
+        214.8800102329125
+      ],
+      [
+        -0.7431308267872982,
+        -0.07472361267455718,
+        0.6649608680120118,
+        -388.7167634577183
+      ],
+      [
+        0.47823113205964213,
+        0.6357592114980934,
+        0.6058920772912244,
+        253.27678928898905
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    ]
+  },
+  "cameras": {
+    "device_1_ir_left": {
+      "T_ref_from_camera": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "source": "checkerboard_left_ir"
+    },
+    "device_1_ir_right": {
+      "T_ref_from_camera": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          50.20249938964844
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "source": "factory_validated_by_checkerboard"
+    },
+    "device_1_color": {
+      "T_ref_from_camera": [
+        [
+          0.9999479055404663,
+          0.010197319090366364,
+          -0.0004933347809128463,
+          13.98144817352295
+        ],
+        [
+          -0.010197141207754612,
+          0.9999479651451111,
+          0.000363217230187729,
+          -0.002823429647833109
+        ],
+        [
+          0.0004970129812136292,
+          -0.00035816768649965525,
+          0.9999998211860657,
+          1.814228892326355
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "source": "factory_validated_by_checkerboard"
+    },
+    "device_2_ir_left": {
+      "T_ref_from_camera": [
+        [
+          -0.7746894512688292,
+          -0.47536198788862716,
+          0.4169978831641356,
+          -201.529599569452
+        ],
+        [
+          0.5948768873407607,
+          -0.32425072660783427,
+          0.7355154350535801,
+          -467.87992925003795
+        ],
+        [
+          -0.21442421271993833,
+          0.8178584515457806,
+          0.5339754771846473,
+          302.1070380176918
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "source": "checkerboard_left_ir"
+    },
+    "device_2_ir_right": {
+      "T_ref_from_camera": [
+        [
+          -0.7746894512688292,
+          -0.47536198788862716,
+          0.4169978831641356,
+          -240.42280509834757
+        ],
+        [
+          0.5948768873407607,
+          -0.32425072660783427,
+          0.7355154350535801,
+          -438.0141953022743
+        ],
+        [
+          -0.21442421271993833,
+          0.8178584515457806,
+          0.5339754771846473,
+          291.3418921104782
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "source": "factory_validated_by_checkerboard"
+    },
+    "device_2_color": {
+      "T_ref_from_camera": [
+        [
+          -0.7766749117580547,
+          -0.47177771852055495,
+          0.4173749424094226,
+          -211.51971772218548
+        ],
+        [
+          0.5939787934992616,
+          -0.3279677752408191,
+          0.7345926319097009,
+          -458.3826587519485
+        ],
+        [
+          -0.20967890211023713,
+          0.8184515119177465,
+          0.5349503335154194,
+          300.2228690668314
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "source": "factory_validated_by_checkerboard"
+    },
+    "device_3_ir_left": {
+      "T_ref_from_camera": [
+        [
+          -0.4680294420304967,
+          0.768262069026048,
+          -0.4367171105972793,
+          214.8800102329125
+        ],
+        [
+          -0.7431308267872982,
+          -0.07472361267455718,
+          0.6649608680120118,
+          -388.7167634577183
+        ],
+        [
+          0.47823113205964213,
+          0.6357592114980934,
+          0.6058920772912244,
+          253.27678928898905
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "source": "checkerboard_left_ir"
+    },
+    "device_3_ir_right": {
+      "T_ref_from_camera": [
+        [
+          -0.4680294420304967,
+          0.768262069026048,
+          -0.4367171105972793,
+          191.28861184665743
+        ],
+        [
+          -0.7431308267872982,
+          -0.07472361267455718,
+          0.6649608680120118,
+          -426.17486718680783
+        ],
+        [
+          0.47823113205964213,
+          0.6357592114980934,
+          0.6058920772912244,
+          277.38241202114534
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "source": "factory_validated_by_checkerboard"
+    },
+    "device_3_color": {
+      "T_ref_from_camera": [
+        [
+          -0.46836166719077243,
+          0.7690506326723472,
+          -0.43496950920524263,
+          207.40397225359715
+        ],
+        [
+          -0.7431654266360589,
+          -0.07664578547156205,
+          0.6647033790398604,
+          -397.9191260274352
+        ],
+        [
+          0.4778519794538359,
+          0.6345758762929016,
+          0.6074297863025997,
+          260.93586143747183
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "source": "factory_validated_by_checkerboard"
+    }
+  },
+  "quality": {
+    "left_ir_pairs": {
+      "1_2": {
+        "common_shots": 32,
+        "inliers": 25,
+        "rotation_residual_deg": 0.14208949049878972,
+        "translation_residual_mm": 0.9901833816158745
+      },
+      "1_3": {
+        "common_shots": 32,
+        "inliers": 28,
+        "rotation_residual_deg": 0.10330276470019027,
+        "translation_residual_mm": 0.5909966154680062
+      },
+      "2_3": {
+        "common_shots": 38,
+        "inliers": 33,
+        "rotation_residual_deg": 0.14712892683395765,
+        "translation_residual_mm": 0.9253351370973992
+      }
+    },
+    "within_device": {
+      "device_1_ir_right": {
+        "common_shots": 30,
+        "inliers": 29,
+        "rotation_residual_deg": 0.05607508863560211,
+        "translation_residual_mm": 0.41667556748838847,
+        "factory_rotation_difference_deg": 0.02042388183605033,
+        "factory_translation_difference_mm": 0.861810609050937,
+        "selected_source": "factory_validated_by_checkerboard"
+      },
+      "device_1_color": {
+        "common_shots": 31,
+        "inliers": 29,
+        "rotation_residual_deg": 0.07689401460256448,
+        "translation_residual_mm": 0.6480990781394177,
+        "factory_rotation_difference_deg": 0.17915389915288604,
+        "factory_translation_difference_mm": 2.406110574499113,
+        "selected_source": "factory_validated_by_checkerboard"
+      },
+      "device_2_ir_right": {
+        "common_shots": 36,
+        "inliers": 35,
+        "rotation_residual_deg": 0.06077571217324648,
+        "translation_residual_mm": 0.5197418208036045,
+        "factory_rotation_difference_deg": 0.18214324558641212,
+        "factory_translation_difference_mm": 2.621810780065073,
+        "selected_source": "factory_validated_by_checkerboard"
+      },
+      "device_2_color": {
+        "common_shots": 38,
+        "inliers": 36,
+        "rotation_residual_deg": 0.09412180025156168,
+        "translation_residual_mm": 0.7822842229954977,
+        "factory_rotation_difference_deg": 0.29672762954136656,
+        "factory_translation_difference_mm": 4.841666917794356,
+        "selected_source": "factory_validated_by_checkerboard"
+      },
+      "device_3_ir_right": {
+        "common_shots": 38,
+        "inliers": 37,
+        "rotation_residual_deg": 0.03150211722674987,
+        "translation_residual_mm": 0.23748559062920682,
+        "factory_rotation_difference_deg": 0.05171325765559655,
+        "factory_translation_difference_mm": 0.4065069888438182,
+        "selected_source": "factory_validated_by_checkerboard"
+      },
+      "device_3_color": {
+        "common_shots": 38,
+        "inliers": 36,
+        "rotation_residual_deg": 0.03164884104320415,
+        "translation_residual_mm": 0.26788132117374225,
+        "factory_rotation_difference_deg": 0.08830401082902682,
+        "factory_translation_difference_mm": 1.0933933769544377,
+        "selected_source": "factory_validated_by_checkerboard"
+      }
+    }
+  }
+}

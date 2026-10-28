@@ -1,0 +1,95 @@
+--- a/code/zigzag_forming.py	2026-10-02 00:55:01.352470290 -0500
++++ b/code/zigzag_forming.py	2026-10-02 00:58:38.327078932 -0500
+@@ -1345,9 +1345,15 @@
+     return motion_plan, thetas
+ 
+ 
+-def run_zigzag_forming():
++def run_zigzag_forming(pivots_2d=None, num_passes=None):
+     """
+     Generate, preview, and execute the zigzag forming pass.
++
++    pivots_2d, if given, is the ordered list of zigzag corner points (mm) in
++    plan_zigzag()'s frame (origin = middle of the wheel line) to execute
++    instead of planning one from the ZIGZAG_* constants — the model-side
++    interface (run_toolpath_sequence.py) hands in its own pivots. num_passes,
++    if given, overrides NUM_PASSES. Both default to the previous behaviour.
+     Robot must already be at TARGET_POS_9 with sheet gripped. The wheel is
+     closed by this function itself, after moving to the zigzag start position
+     (STEP 7.25 below) — not before.
+@@ -1370,6 +1376,7 @@
+     below).
+     """
+     global ARC_RADIUS_MM, _initial_pulse_count_this_run
++    num_passes = NUM_PASSES if num_passes is None else int(num_passes)
+     _estimate_radius_adaptively = ARC_RADIUS_MM is None
+     _run_info_dir = _output_dir if _output_dir is not None else os.path.dirname(os.path.abspath(__file__))
+     if not _estimate_radius_adaptively:
+@@ -1382,26 +1389,26 @@
+             pass  # no run_info.txt yet (e.g. standalone/test usage without configure()'s output_dir) — non-fatal
+     print("\nGenerating zigzag toolpath...")
+ 
+-    pivots_2d = plan_zigzag(
+-        x_dim=X_DIM_MM, y_dim=Y_DIM_MM,
+-        zigzag_lv_mm=ZIGZAG_LV_MM, zigzag_alpha_deg=ZIGZAG_ALPHA_DEG,
+-        zigzag_N=ZIGZAG_N, rotation_deg=ZIGZAG_ROTATION_DEG,
+-        resolution_mm=None,
+-        start_mm=ZIGZAG_START_MM,
+-    )
++    if pivots_2d is None:
++        pivots_2d = plan_zigzag(
++            x_dim=X_DIM_MM, y_dim=Y_DIM_MM,
++            zigzag_lv_mm=ZIGZAG_LV_MM, zigzag_alpha_deg=ZIGZAG_ALPHA_DEG,
++            zigzag_N=ZIGZAG_N, rotation_deg=ZIGZAG_ROTATION_DEG,
++            resolution_mm=None,
++            start_mm=ZIGZAG_START_MM,
++        )
++    else:
++        pivots_2d = [(float(x), float(y)) for x, y in pivots_2d]
+ 
+     # Preview is generated (and opened) BEFORE the safety check below, from
+     # pivots_2d alone — no dependency on motion_plan/_build_motion_plan —
+     # so it's always available for inspection even when the safety check is
+     # about to stop the run: this is what the path *would* have looked
+     # like, safe zone violation and all.
+-    _dense_2d = plan_zigzag(
+-        x_dim=X_DIM_MM, y_dim=Y_DIM_MM,
+-        zigzag_lv_mm=ZIGZAG_LV_MM, zigzag_alpha_deg=ZIGZAG_ALPHA_DEG,
+-        zigzag_N=ZIGZAG_N, rotation_deg=ZIGZAG_ROTATION_DEG,
+-        resolution_mm=ZIGZAG_RESOLUTION_MM,
+-        start_mm=ZIGZAG_START_MM,
+-    )
++    # (plan_zigzag(resolution_mm=...) is exactly interpolate_path() over the same
++    # pivots, so this is unchanged for the planned case and also covers the
++    # pivots_2d-given case.)
++    _dense_2d = interpolate_path(pivots_2d, ZIGZAG_RESOLUTION_MM)
+     _dense_3d = map_to_arc(_dense_2d, ARC_RADIUS_MM) if ARC_RADIUS_MM else \
+                 [(x, y, 0.0) for x, y in _dense_2d]
+ 
+@@ -1530,7 +1537,7 @@
+     # position where the previous pass finished.
+     # The wheel is only unloaded after the final pass (pass_num == NUM_PASSES).
+     # ---------------------------------------------------------------
+-    for pass_num in range(1, NUM_PASSES + 1):
++    for pass_num in range(1, num_passes + 1):
+         is_reverse = (pass_num % 2 == 0)
+         curr_pivots = pivots_2d[::-1] if is_reverse else pivots_2d
+         dir_label = "reverse (right -> left)" if is_reverse else "forward (left -> right)"
+@@ -1544,7 +1551,7 @@
+         pass_start_wrist3 = _rtde('getActualQ')[5]
+ 
+         print(f"\n=======================================================")
+-        print(f"Starting Pass {pass_num}/{NUM_PASSES}: {dir_label}")
++        print(f"Starting Pass {pass_num}/{num_passes}: {dir_label}")
+         print(f"=======================================================\n")
+ 
+         _execute_pass(motion_plan, thetas, label=f"pass-{pass_num} ({dir_label}) ",
+@@ -1565,7 +1572,7 @@
+                 print(f"  [info] Point cloud not available for Pass {pass_num}. Continuing with current radius ({ARC_RADIUS_MM}).")
+ 
+         # 3. Wheel unload ONLY after the final pass
+-        if pass_num == NUM_PASSES:
++        if pass_num == num_passes:
+             print("\nAll forming passes complete. Unloading wheel...")
+             _unload_wheel_by_recorded_pulses(initial_pulse_count)
+         else:

@@ -1,0 +1,47 @@
+{
+ "schema": "v5facts",
+ "rule": "qualitative physics + concrete settings only (2026-10-20)",
+ "facts": [
+  "The English wheel only adds deformation: a sheet formed past the target cannot be formed back, so under-forming is recoverable and over-forming is not; approach the target in steps.",
+  "Orientation sets the curvature direction: rot 0 (strips along y) makes the height change mainly along x, rot 90 (strips along x) mainly along y.",
+  "A strip is a 10 mm wide wheeling track; the strips of a zigzag overlap or nearly touch (spacing 2.4-12 mm), so N follows from the working-area size.",
+  "More strips (larger N) and longer strips add more deformation per pass; the deformation concentrates in the working area, but the whole sheet bends with it, including the margins and the band next to the gripper.",
+  "Work hardening: every further pass over an already-wheeled spot adds about 0.80 times what the previous pass added there (the simulator's hardening setting), so repeated passes have diminishing returns.",
+  "With one working area the whole sheet curls into a cylinder whose axis follows the strips (rot 0: axis along the feed); a small working area concentrates the curl near itself, a large one curls the sheet uniformly.",
+  "Heights are measured relative to the sheet's own best-fit plane: the gripper holds the bottom edge, but the sheet's rigid position and tilt are not part of the shape."
+ ],
+ "settings": {
+  "strip_width_mm": 10.0,
+  "pitch_mm": [
+   2.4,
+   12.0
+  ],
+  "hardening": {
+   "model": "voce_decay",
+   "history_variable": "hit_count",
+   "beta": 0.223143551,
+   "floor": 0.0,
+   "scope": "face_shared",
+   "count_rule": "plastic_hits"
+  },
+  "dose": {
+   "gtop": 0.0009,
+   "gbot": 0.0001,
+   "ortho": -0.5
+  },
+  "sheet": {
+   "width_mm": 231.0,
+   "length_mm": 174.0,
+   "thickness_mm": 0.6,
+   "clamp_mm": 20.0,
+   "margin_side_mm": 43.4,
+   "margin_bottom_mm": 0.0,
+   "pad_offsets_from_left_mm": [
+    6.5,
+    224.5
+   ],
+   "pad_diameter_mm": 13.0
+  },
+  "crop_mm": 20.0
+ }
+}

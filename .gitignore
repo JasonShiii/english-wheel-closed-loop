@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+loops/
+experiments/newsheet_pipeline/runs/
+*.zip
