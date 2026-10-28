@@ -49,6 +49,9 @@ once), or copied from ideas2: the folder `~/.cache/huggingface/hub/models--unslo
 into the same place on the robot PC, then run with `HF_HUB_OFFLINE=1`. With the checkpoint in place `rigloop`
 needs no `--server` and no `--ckpt` (the default is that path). Loading takes about 25 s, a plan 7 to 30 s.
 Check before the session: `python -m ew_loop.cli rigloop --plant replay --replay-run <a recorded run> ...` (section 3).
+Verified 2026-10-28 from a clone outside the research repository with the checkpoint zip unpacked at its root: the
+model loads in 23 s and gives the same plan, prompt and `toolpath.json` as the research repository on the recorded
+10-21 run.
 
 ## 2b. The model as a service (GPU machine)
 

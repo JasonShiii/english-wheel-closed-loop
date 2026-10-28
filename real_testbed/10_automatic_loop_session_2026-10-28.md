@@ -181,14 +181,19 @@ this target's span, so the controller's `amp < 0.70` block rule starts from ther
 
 ## 9. The robot-PC package, verified 2026-10-28 evening
 
-`make_robot_pc_package.py` -> `robot_pc_package/` and `robot_pc_package_2026-10-28.zip` (55 files, 0.6 MB; code,
-targets, calibration, fixed recipe, robot-side reference, documents; `requirements.txt` = numpy, scipy, matplotlib,
-opencv-python-headless). Both checks ran from a copy OUTSIDE the repository, with a fresh `python -m venv` holding
+`make_robot_pc_package.py` -> `robot_pc_package/` = the git clone pushed to
+`github.com/JasonShiii/english-wheel-closed-loop` (private; invite Danish: `gh repo add-collaborator` or the web UI,
+his login is `danishgalebotswe`), plus `robot_pc_package_2026-10-28.zip` (0.6 MB; code, targets, calibration, fixed
+recipe, robot-side reference, documents, the prompt code for a local model; `requirements.txt` = numpy, scipy,
+matplotlib, opencv-python-headless; `requirements-model.txt` = the training environment's torch/unsloth versions)
+and, with `--model`, `model_free_aug_e8_ckpt1832_inference.zip` (132 MB, scp / USB; not in git). After every code
+change: rebuild, then `git -C robot_pc_package add -A && git commit && git push`. Both checks ran from a copy OUTSIDE the repository, with a fresh `python -m venv` holding
 only `requirements.txt` (python 3.10), i.e. what Danish's PC will have:
 
 | check | result |
 |---|---|
 | `rigloop --plant replay --server http://127.0.0.1:8765` (model service on ideas2 GPU 3, 23 s load), target S1_t042 | plan, prompt, model answer, rendered image and `toolpath.json` of round 1 byte-identical to the morning rehearsal; cadence one capture per block: capture 1 amp 0.69 corr 0.85, capture 2 amp 1.14 -> stop overshoot (replayed captures are the stronger recorded zigzag). Outputs `figures/rig/rehearsal_robotpc_http_S1_t042/`, log `logs/rigloop_robotpc_http_S1_t042.log` |
+| `rigloop --plant replay` with the MODEL LOCAL (no `--server`; checkpoint from `model_free_aug_e8_ckpt1832_inference.zip` unpacked at the package root, training environment, GPU 3) | import chain of the prompt code inside the package OK (planners, eval_execute, category_tests, facts.json); model loaded in 23 s; plan, prompt and toolpath of round 1 identical to the in-repo rehearsal. Outputs `figures/rig/rehearsal_robotpc_localmodel_S1_t042/`, log `logs/rigloop_robotpc_localmodel_S1_t042.log` |
 | `rigloop --plant file --captures <staged run folder> --fixed-plan handover/fixed_recipe_S1_t042_c4.json`, driven by `ew_loop/tests/drive_file_plant_rehearsal.py` (links one recorded capture per block after each `toolpath.json`, then Enter) | the loop waited at the prompt, found `pointcloud_pass1`, measured, re-planned, waited for `pointcloud_pass2`, stopped on overshoot; no model code needed. Outputs `figures/rig/rehearsal_robotpc_fileplant_fixed_S1_t042/`, log `logs/rigloop_robotpc_fileplant_fixed_S1_t042.log` |
 
 Not verified until on the machine: that Danish's PC reaches port 8765 on ideas2 (else the ssh tunnel, else plan B),
