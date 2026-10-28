@@ -34,7 +34,10 @@ def reference_chain(run, k):
 def main():
     m = ME.RigMeasurer()
     flat = m.reference(RUN)
-    assert m.info["inside_fraction"] > 0.7 and m.info["beyond_edge_points"]["y+"] > m.info["beyond_edge_points"]["y-"], m.info
+    # the bar counts are taken BEFORE the frame flip, in the sheet finder's initial axis, whose sign depends on the BLAS
+    # (y+ on Linux, y- on Windows for the same capture); what matters is that one side clearly holds the bar
+    b = m.info["beyond_edge_points"]
+    assert m.info["inside_fraction"] > 0.7 and max(b.values()) > 5 * min(b.values()), m.info
     assert flat.z_mm.shape == (88, 117) and abs(flat.x_mm[-1] - 115.5) < 1e-6
     tgt = F.HeightField.load(os.path.join(RT, "figures", "rig", "targets", "S1_t042_c4.npz"))
     assert tgt.z_mm.shape == flat.z_mm.shape and np.allclose(tgt.x_mm, flat.x_mm) and np.allclose(tgt.y_mm, flat.y_mm), "target and measurement grids differ"
