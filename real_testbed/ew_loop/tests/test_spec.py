@@ -16,7 +16,9 @@ import numpy as np
 from ew_loop import spec, frames
 from ew_loop.frames import Sheet
 
-ROBOT_CODE = os.path.join(os.path.dirname(frames.__file__), "..", "Engish_Wheel_T109", "code")
+# the robot's own planner: EW_ROBOT_CODE = the folder holding zigzag_planner.py (on the robot PC the DoBot
+# Scripts folder, i.e. the planner the robot runs today); default = the clone next to this repository
+ROBOT_CODE = os.environ.get("EW_ROBOT_CODE") or os.path.join(os.path.dirname(frames.__file__), "..", "Engish_Wheel_T109", "code")
 sys.path.insert(0, os.path.abspath(ROBOT_CODE))
 import zigzag_planner as zp   # the robot's planner (pure python)
 
