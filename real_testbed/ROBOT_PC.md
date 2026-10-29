@@ -121,6 +121,12 @@ C:\anaconda3\envs\EnglishWheel\python.exe -m ew_loop.cli rigloop --plant dobot ^
     --calib "pc_post_processing/deliverable_092826/calibration results" --clamp 12 --n 3 --max-passes 12
 ```
 
+Before starting: the Dobot controller must be in TCP remote-control mode (in DobotStudio Pro: disconnect / set
+Remote Control to TCP/IP; otherwise every command answers `Control Mode Is Not Tcp` and his driver stops before
+moving), the robot enabled without alarms, the cameras on, and the model service reachable
+(`curl http://localhost:8765/health`). The loop can be started over ssh as well (his Tk monitors open invisibly in
+that session; the force CSVs are written regardless).
+
 What happens: (1) his driver connects, goes to the scan pose, takes `pointcloud_pass0`, parks at pos_9, disconnects;
 the loop prints `reference:` and writes `loops/sheet01/round_00/reference/reference_preview.png`. (2) Each round:
 the loop prints the plan, writes `round_0N/toolpath.json` + `preview.png`, asks `execute round N? [y/N]`; on `y` his

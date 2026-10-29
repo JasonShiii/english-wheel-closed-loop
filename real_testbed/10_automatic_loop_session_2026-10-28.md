@@ -53,6 +53,12 @@ then NUM_PASSES passes alternating L->R / R->L with unload + scan + Rx/Rz prompt
 sets ours from the toolpath file at run time. Plan A on site = `rigloop --plant dobot` (`ROBOT_PC.md` 3b), no file
 copying at all; plan A' = `--plant file --captures <his run folder>` if his driver must be run by hand.
 
+Dry run 2026-10-29 13:34 (no sheet in the gripper, over ssh): `rigloop --plant dobot --auto-radii --server
+http://localhost:8765 --yes` -> service OK -> his driver (TCP mode had to be set in DobotStudio first) moved to the
+scan pose, captured `pointcloud_pass0`, parked at pos_9 (20 s) -> the loop's reference step stopped with "no sheet
+found" (coverage 0.12), 26 s in all. Everything but the sheet is verified; the same command with the sheet gripped
+is the live run. The tunnel from ideas2 runs under a reconnect loop (`tunnel_keepalive.sh`, scratchpad of the session).
+
 ## 2. Before leaving (ideas2)
 
 ```
