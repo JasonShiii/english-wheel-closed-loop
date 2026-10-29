@@ -82,6 +82,7 @@ def wa_to_toolpath(wa, sheet, idx=0, allow_rot90=False):
     return {
         "id": f"TP{idx}",
         "passes": int(wa["n"]),
+        "start_direction": "l2r",       # direction of the block's first pass; set by the loop (alternates over the session)
         "robot": {  # zigzag_planner.plan_zigzag() equivalent (lv doubled: their lv = one up+down V)
             "zigzag_lv_mm": round(2.0 * lv, 4), "zigzag_alpha_deg": round(alpha, 4),
             "zigzag_N": int(wa["N"]), "rotation_deg": rot,
@@ -93,6 +94,32 @@ def wa_to_toolpath(wa, sheet, idx=0, allow_rot90=False):
                  "strip_width_mm": STRIP_W},
         "pivots_xy_mm": [[round(float(x), 4), round(float(y), 4)] for x, y in piv_planner],
     }
+
+
+def flip(d):
+    return "r2l" if d == "l2r" else "l2r"
+
+
+def pass_directions(tp):
+    """direction of every pass of a toolpath: the first pass as tp['start_direction'], then alternating
+    (the robot retraces the pattern backwards). l2r = increasing planner X = the robot's 'left -> right'."""
+    d = tp.get("start_direction", "l2r"); out = []
+    for _ in range(int(tp["passes"])):
+        out.append(d); d = flip(d)
+    return out
+
+
+def set_directions(tp, start):
+    tp["start_direction"] = start
+    tp["pass_directions"] = pass_directions(tp)
+    return tp
+
+
+def pass_order(tp, d):
+    """the pivots in traversal order for a pass of direction d (pivots_xy_mm is stored in the robot planner's
+    own order, decreasing X = r2l)"""
+    piv = list(tp["pivots_xy_mm"])
+    return piv[::-1] if d == "l2r" else piv
 
 
 def plan_to_toolpaths(was, sheet, allow_rot90=False):
@@ -141,7 +168,7 @@ def preview_png(doc, path, title=None):
     from matplotlib.patches import Rectangle, Circle
     sheet = Sheet.from_dict(doc["sheet"])
     W, L = sheet.width_mm, sheet.length_mm
-    fig, ax = plt.subplots(figsize=(6.5, 6.5 * (L + 30) / (W + 30)))
+    fig, ax = plt.subplots(figsize=(7.5, 7.5 * (L + 30) / (W + 30)))
     ax.add_patch(Rectangle((-W / 2, -L / 2), W, L, fc="#eceff1", ec="#263238", lw=2, zorder=1))
     ax.add_patch(Rectangle((-W / 2, -L / 2), W, sheet.clamp_mm, fc="#cfd8dc", ec="none", zorder=2,
                            hatch="//", alpha=0.6))
@@ -152,18 +179,37 @@ def preview_png(doc, path, title=None):
     for (px, py) in sheet.pad_centres():
         ax.add_patch(Circle((px, py), sheet.pad_diameter_mm / 2, fc="#f5cba7", ec="#935116", zorder=5))
     colors = plt.get_cmap("tab10")
+    arrow = "L\u2192R"; arrow_r = "R\u2192L"
     for k, tp in enumerate(doc["toolpaths"]):
-        piv = sheet.from_planner(np.array(tp["pivots_xy_mm"], dtype=float))
         o = tp["ours"]
         c = colors(k % 10)
+        dirs = tp.get("pass_directions") or pass_directions(tp)
+        first = sheet.from_planner(np.array(pass_order(tp, dirs[0]), dtype=float))     # traversal order of pass 1
+        last = sheet.from_planner(np.array(pass_order(tp, dirs[-1]), dtype=float))
         ax.add_patch(Rectangle((o["cx"] - o["wx"] / 2, o["cy"] - o["wy"] / 2), o["wx"], o["wy"],
                                fc="none", ec=c, ls=":", lw=1, zorder=6))
-        ax.plot(piv[:, 0], piv[:, 1], "-", color=c, lw=1.4, zorder=7,
-                label=f"{tp['id']}: {tp['passes']} pass(es), N={o['N']}, rot={o['rot']}")
-        ax.plot(piv[0, 0], piv[0, 1], "o", color=c, ms=5, zorder=8)
+        ax.plot(first[:, 0], first[:, 1], "-", color=c, lw=1.4, zorder=7,
+                label=f"{tp['id']}: {tp['passes']} pass(es) " + ", ".join(f"{i + 1}:{arrow if d == 'l2r' else arrow_r}" for i, d in enumerate(dirs))
+                      + f"; N={o['N']}, rot={o['rot']}")
+        for a, b in zip(first[:-1], first[1:]):                                        # arrow heads along pass 1
+            mid = (a + b) / 2; v = (b - a) / max(np.linalg.norm(b - a), 1e-9)
+            ax.annotate("", xy=mid + 2.0 * v, xytext=mid - 2.0 * v, arrowprops=dict(arrowstyle="->", color=c, lw=1.0), zorder=8)
+        ax.plot(first[0, 0], first[0, 1], "o", color="#2e7d32", ms=9, mec="k", zorder=9)
+        ax.plot(last[-1, 0], last[-1, 1], "s", color="#c62828", ms=6, mec="k", zorder=9)
+        events = {}                                                                      # every pass's start and end, by location
+        for i, d in enumerate(dirs):
+            o_i = sheet.from_planner(np.array(pass_order(tp, d), dtype=float))
+            for pt, what in ((o_i[0], f"P{i + 1} start"), (o_i[-1], f"P{i + 1} end")):
+                events.setdefault((round(float(pt[0]), 1), round(float(pt[1]), 1)), []).append(what)
+        for (ex, ey), what in events.items():
+            right = ex >= o["cx"]
+            ax.annotate("\n".join(what), (ex, ey), textcoords="offset points", xytext=(6 if right else -6, -4), ha="left" if right else "right",
+                        va="top", fontsize=7, color="k", weight="bold", zorder=10,
+                        bbox=dict(boxstyle="round,pad=0.2", fc="white", ec=c, lw=0.8, alpha=0.9))
     ax.set_xlim(-W / 2 - 15, W / 2 + 15); ax.set_ylim(-L / 2 - 15, L / 2 + 15)
     ax.set_aspect("equal"); ax.set_xlabel("x (mm)"); ax.set_ylabel("y (mm, feed direction)")
-    ax.set_title(title or f"sheet {W:g}x{L:g}x{sheet.thickness_mm:g} mm, clamp {sheet.clamp_mm:g} mm", fontsize=9)
+    ax.set_title(title or f"sheet {W:g}x{L:g}x{sheet.thickness_mm:g} mm, clamp {sheet.clamp_mm:g} mm\n"
+                 "green dot = start of pass 1, red square = end of the last pass, arrows = pass 1", fontsize=9)
     if doc["toolpaths"]:
         ax.legend(fontsize=7, loc="upper right")
     fig.tight_layout(); fig.savefig(path, dpi=130); plt.close(fig)

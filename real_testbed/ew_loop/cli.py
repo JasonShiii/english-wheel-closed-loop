@@ -184,7 +184,11 @@ def cmd_rigloop(a):
     profile = MN.NewsheetModel(pairs=a.pairs or MN.DEFAULT_PAIRS, data=a.data or MN.DEFAULT_DATA)
     sheet = Sheet(width_mm=231.0, length_mm=174.0, thickness_mm=a.thickness, clamp_mm=a.clamp, margin_side_mm=a.margin_side,
                   margin_bottom_mm=0.0, margin_top_mm=a.margin_top, pad_offsets_from_left_mm=(6.5, 224.5), pad_diameter_mm=13.0)
-    if a.fixed_plan:
+    script = None
+    if a.script:
+        script = json.load(open(a.script))
+        planner = None; print(f"scripted blocks: {[(s['wa'], s['passes']) for s in script]}")
+    elif a.fixed_plan:
         planner = P.FixedFieldsPlanner(a.fixed_plan, profile)
     elif a.server:
         planner = P.HttpFieldsPlanner(a.server); print("server:", planner.health())
@@ -199,8 +203,9 @@ def cmd_rigloop(a):
         plant = L.FilePlant(a.exchange, a.captures)
     measurer = ME.RigMeasurer(calib_dir=a.calib)
     st = L.run_loop(a.out, sheet, a.target, planner, plant, n=a.n, max_passes=a.max_passes, allow_rot90=False,
-                    confirm=not a.yes, robust=True, resume=a.resume, measurer=measurer, profile=profile)
-    return 0 if st.reason and st.reason.startswith("converged") else 3
+                    confirm=not a.yes, robust=True, resume=a.resume, measurer=measurer, profile=profile,
+                    script=script, allow_no_sheet=a.allow_no_sheet)
+    return 0 if st.reason and st.reason.startswith(("converged", "script_done")) else 3
 
 
 def cmd_serve_fields(a):
@@ -272,6 +277,8 @@ def main(argv=None):
     rl.add_argument("--out", required=True)
     rl.add_argument("--ckpt", help="new-sheet checkpoint (default: free_aug_e8/checkpoint-1832)"); rl.add_argument("--server", help="URL of `serve-fields`")
     rl.add_argument("--fixed-plan", help="plan JSON instead of a model")
+    rl.add_argument("--script", help="JSON list of {wa, passes}: run these blocks as listed, no planner, no controller decisions (dry runs)")
+    rl.add_argument("--allow-no-sheet", action="store_true", help="continue when the flat scan holds no sheet (dry runs without a sheet)")
     rl.add_argument("--plant", choices=["file", "replay", "dobot"], default="file")
     rl.add_argument("--robot-scripts", help="(dobot) Danish's Scripts folder (English-Wheel---DoBot-Files/Scripts)")
     rl.add_argument("--robot-python", help="(dobot) python for his driver (default: this one)")

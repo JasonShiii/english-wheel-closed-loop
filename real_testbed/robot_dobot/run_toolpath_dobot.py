@@ -40,10 +40,14 @@ def load_toolpath(path):
     return doc, doc["toolpaths"][0]
 
 
-def configure(zf, zp, doc, tp, mode, margin_top, auto_radii):
-    """set his module constants from the file and replace his planner by the file's pivots"""
+def configure(zf, zp, doc, tp, mode, margin_top, auto_radii, start_direction="l2r"):
+    """set his module constants from the file and replace his planner by the file's pivots. His driver runs
+    pass 1 over the REVERSED pivot list ('left -> right'), pass 2 over the list as given, ...; for a block that
+    must start right -> left the list is handed over reversed."""
     sheet, rb = doc["sheet"], tp["robot"]
     piv = [(float(x), float(y)) for x, y in tp["pivots_xy_mm"]]
+    if start_direction == "r2l":
+        piv = piv[::-1]
     zf.X_DIM_MM = float(sheet["width_mm"]); zf.Y_DIM_MM = float(sheet["length_mm"])
     zf.SHEET_BOTTOM_TO_WHEEL_LINE_MM = float(sheet["clamp_mm"])
     zf.Y_DIM_EFFECTIVE_MM = zf.Y_DIM_MM - zf.SHEET_BOTTOM_TO_WHEEL_LINE_MM
@@ -127,6 +131,8 @@ def main():
     ap.add_argument("--auto-radii", action="store_true", help="no Rx/Rz prompt between passes (keep the current radii)")
     ap.add_argument("--show-preview", action="store_true", help="let his driver open its zigzag preview in the image viewer (desktop session)")
     ap.add_argument("--sheet-json", help="(baseline) the loop's sheet (frames.Sheet.to_dict) for run_info.txt")
+    ap.add_argument("--start-direction", choices=["l2r", "r2l"], default="l2r",
+                    help="direction of the block's first pass (his driver always starts left->right: r2l hands it the pivots reversed)")
     a = ap.parse_args()
     if a.mode != "baseline" and not a.toolpath:
         ap.error(f"{a.mode} needs a toolpath.json")
@@ -155,8 +161,18 @@ def main():
         patch_run_info(extra)
     else:
         doc, tp = load_toolpath(a.toolpath)
-        piv = configure(zf, zp, doc, tp, a.mode, a.margin_top, a.auto_radii)
-        patch_run_info({"Loop Mode": f"run: {tp['passes']} pass(es) of the toolpath below", **run_info_extra(doc["sheet"], tp, os.path.abspath(a.toolpath))})
+        piv = configure(zf, zp, doc, tp, a.mode, a.margin_top, a.auto_radii, a.start_direction)
+        dirs = []
+        d = a.start_direction
+        for _ in range(int(tp["passes"]) if a.mode == "run" else 0):
+            dirs.append(d); d = "r2l" if d == "l2r" else "l2r"
+        res["pass_directions"] = dirs
+        patch_run_info({"Loop Mode": f"run: {tp['passes']} pass(es) of the toolpath below",
+                        "Pass Directions": ", ".join(f"{i + 1}: {'left -> right' if x == 'l2r' else 'right -> left'}" for i, x in enumerate(dirs)) or "none",
+                        **run_info_extra(doc["sheet"], tp, os.path.abspath(a.toolpath))})
+        if a.start_direction == "r2l":
+            print("[run_toolpath_dobot] NOTE: this block starts RIGHT -> LEFT (pivots handed over reversed); his driver's "
+                  "'left -> right' / 'right -> left' labels are therefore swapped for this run", flush=True)
         bounds, oob = safety(zf, piv)
         res["constants"] = {k: getattr(zf, k) for k in ("X_DIM_MM", "Y_DIM_MM", "SHEET_BOTTOM_TO_WHEEL_LINE_MM", "MARGIN_SIDE_MM",
                                                        "MARGIN_BOTTOM_MM", "MARGIN_TOP_MM", "ZIGZAG_LV_MM", "ZIGZAG_ALPHA_DEG",

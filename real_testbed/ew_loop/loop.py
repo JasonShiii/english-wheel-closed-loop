@@ -161,7 +161,7 @@ class ReplayPlant:
     (pointcloud_pass0 = flat, pointcloud_pass1.. = after each pass). The toolpath is ignored, so the
     shapes do not follow the plan; the loop mechanics, the measurement and the controller do run."""
     def __init__(self, run):
-        self.run, self.k = run, 0
+        self.run, self.k, self.next_dir = run, 0, "l2r"
         from .measure import pass_dir
         self._pd = pass_dir
 
@@ -176,13 +176,15 @@ class ReplayPlant:
         if not avail:
             return [], 0
         self.k = avail[-1]
+        dirs = spec.pass_directions(doc["toolpaths"][0])
+        self.next_dir = spec.flip(dirs[min(len(avail), len(dirs)) - 1])
         return [Capture(doc["toolpaths"][0]["id"], self.k, None, pass_dir=self._pd(self.run, self.k))], len(avail)
 
     def state(self):
-        return {"k": self.k}
+        return {"k": self.k, "next_dir": self.next_dir}
 
     def restore(self, d):
-        self.k = d.get("k", 0)
+        self.k, self.next_dir = d.get("k", 0), d.get("next_dir", "l2r")
 
 
 class FilePlant:
@@ -200,7 +202,7 @@ class FilePlant:
         self.exchange = os.path.abspath(exchange) if exchange else None
         self.captures = os.path.abspath(captures) if captures else os.path.join(self.exchange, "captures")
         os.makedirs(self.captures, exist_ok=True)
-        self.k = 0
+        self.k, self.next_dir = 0, "l2r"
         from .measure import pass_dir
         self._pd = pass_dir
 
@@ -223,8 +225,9 @@ class FilePlant:
                 if os.path.exists(os.path.join(round_dir, f)):
                     shutil.copy2(os.path.join(round_dir, f), xd)
             tp_path = os.path.join(xd, "toolpath.json")
-        print(f"  >>> run {tp_path} on the robot: {n} pass(es), then the scan pose and ONE capture -> "
-              f"{self._pd(self.captures, self.k + 1)}", flush=True)
+        dirs = spec.pass_directions(doc["toolpaths"][0])
+        print(f"  >>> run {tp_path} on the robot: {n} pass(es), pass 1 {'LEFT -> RIGHT' if dirs[0] == 'l2r' else 'RIGHT -> LEFT'} "
+              f"(then alternating), then the scan pose and ONE capture -> {self._pd(self.captures, self.k + 1)}", flush=True)
         executed = n
         while True:
             ans = input("  press Enter when the capture folder is there (or type the number of passes actually run, then Enter) ").strip()
@@ -241,13 +244,14 @@ class FilePlant:
         tp = doc["toolpaths"][0]
         caps = [Capture(tp["id"], k, None, pass_dir=self._pd(self.captures, k)) for k in new]
         self.k = new[-1]
+        self.next_dir = spec.flip(dirs[min(executed, len(dirs)) - 1]) if executed > 0 else self.next_dir
         return caps, executed
 
     def state(self):
-        return {"k": self.k}
+        return {"k": self.k, "next_dir": self.next_dir}
 
     def restore(self, d):
-        self.k = d.get("k", 0)
+        self.k, self.next_dir = d.get("k", 0), d.get("next_dir", "l2r")
 
 
 class DobotPlant:
@@ -261,7 +265,7 @@ class DobotPlant:
     def __init__(self, scripts, python=None, margin_top=12.0, auto_radii=False, show_preview=False, sheet=None):
         self.scripts, self.python, self.margin_top, self.auto_radii = os.path.abspath(scripts), python or sys.executable, margin_top, auto_radii
         self.show_preview, self.sheet, self.k = show_preview, sheet, 0
-        self.last_run = None
+        self.last_run, self.next_dir = None, "l2r"      # direction of the next block's first pass (alternates over the session)
         if not os.path.exists(os.path.join(self.scripts, "run_zigzag_oldclamps.py")):
             raise FileNotFoundError(f"{self.scripts}: run_zigzag_oldclamps.py not found")
 
@@ -270,6 +274,8 @@ class DobotPlant:
         cmd = [self.python, self.ADAPTER, mode] + ([toolpath] if toolpath else []) + ["--scripts", self.scripts, "--out", out,
                                                                                       "--margin-top", str(self.margin_top)]
         cmd += (["--auto-radii"] if self.auto_radii else []) + (["--show-preview"] if self.show_preview else [])
+        if mode == "run":
+            cmd += ["--start-direction", self.next_dir]
         if mode == "baseline" and self.sheet is not None:
             sj = os.path.join(out, "sheet.json"); json.dump(self.sheet.to_dict(), open(sj, "w"), indent=1); cmd += ["--sheet-json", sj]
         print("  >>> " + " ".join(f'"{c}"' if " " in c else c for c in cmd), flush=True)
@@ -301,13 +307,17 @@ class DobotPlant:
         for j in sorted(int(k) for k in res["captures"] if int(k) > 0):
             self.k += 1
             caps.append(Capture(tp["id"], self.k, None, pass_dir=res["captures"][str(j)]))
-        return caps, int(res.get("passes_done", len(caps)))
+        executed = int(res.get("passes_done", len(caps)))
+        dirs = spec.pass_directions(tp)
+        if executed > 0:
+            self.next_dir = spec.flip(dirs[min(executed, len(dirs)) - 1])
+        return caps, executed
 
     def state(self):
-        return {"k": self.k}
+        return {"k": self.k, "next_dir": self.next_dir}
 
     def restore(self, d):
-        self.k = d.get("k", 0)
+        self.k, self.next_dir = d.get("k", 0), d.get("next_dir", "l2r")
 
 
 # ---------------------------------------------------------------------------------------
@@ -316,6 +326,56 @@ class DobotPlant:
 def _save_field(fld, path_noext, profile=None):
     fld.save(path_noext + ".npz")
     (profile.render if profile is not None else frames.field_png)(fld, path_noext + ".png")
+
+
+def _replan_png(rd, rec, doc, cur, target):
+    """round_NN/replan.png: what the planner saw (the two heatmaps, their heights, amp/corr) and what came out
+    (the full plan, the controller's decision and the toolpath handed to the robot, with pass directions)"""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import matplotlib.image as mpimg
+    fig = plt.figure(figsize=(16, 6.2))
+    gs = fig.add_gridspec(2, 3, height_ratios=[4.2, 2.0])
+    for j, (name, fld, ttl) in enumerate((("cur.png", cur, "input: current shape"), ("tgt.png", target, "input: target"))):
+        ax = fig.add_subplot(gs[0, j]); p = os.path.join(rd, name)
+        if os.path.exists(p):
+            ax.imshow(mpimg.imread(p))
+        ax.set_axis_off(); zr = fld.zrange()
+        ax.set_title(f"{ttl}: z {zr[0]:.1f} .. {zr[1]:.1f} mm (span {zr[1] - zr[0]:.1f})", fontsize=10)
+    ax = fig.add_subplot(gs[0, 2]); p = os.path.join(rd, "preview.png")
+    if os.path.exists(p):
+        ax.imshow(mpimg.imread(p))
+    ax.set_axis_off(); ax.set_title("output: the block handed to the robot", fontsize=10)
+    b = rec.get("before") or {}
+    lines = [f"round {rec['round']}   measured before: amp {b.get('amp_ratio')}  corr {b.get('pattern_corr')}  "
+             f"span {b.get('span_cur')} / target {b.get('span_tgt')} mm"]
+    plan = rec.get("plan") or []
+    lines.append("plan" + (" (scripted)" if rec.get("scripted") else f" from the model ({rec.get('model_secs')} s)") + ":")
+    for i, e in enumerate(plan):
+        lines.append(f"   {'>' if i == 0 else ' '} ({e['cx']:.1f}, {e['cy']:.1f}) {e['wx']:.0f} x {e['wy']:.0f} mm, rot {e['rot']}, N {e['N']}, hits {e['n']}")
+    lines.append(f"controller: {rec.get('block_passes')} pass(es)  [{rec.get('block_reason', '')}]")
+    for tp in doc["toolpaths"]:
+        rb = tp["robot"]; dirs = tp.get("pass_directions") or []
+        lines.append(f"toolpath {tp['id']}: {tp['passes']} pass(es) " + ", ".join(f"{i + 1}:{'L>R' if d == 'l2r' else 'R>L'}" for i, d in enumerate(dirs))
+                     + f" | zigzag_lv {rb['zigzag_lv_mm']}  alpha {rb['zigzag_alpha_deg']}  N {rb['zigzag_N']}  rot {rb['rotation_deg']}  "
+                       f"centre_x {rb['center_x_mm']}  start {rb['start_mm']}  ({len(tp['pivots_xy_mm'])} pivots)")
+    ax = fig.add_subplot(gs[1, :]); ax.set_axis_off()
+    ax.text(0.0, 1.0, "\n".join(lines), family="monospace", fontsize=9, va="top", ha="left", transform=ax.transAxes)
+    fig.tight_layout(); fig.savefig(os.path.join(rd, "replan.png"), dpi=110); plt.close(fig)
+
+
+def _compare(fld, target, robust, tolerant, log):
+    """ST.compare; with tolerant (dry runs without a sheet) a field with too few cells gives NaN metrics instead of
+    stopping the loop, so the robot part of the dry run still runs to the end"""
+    try:
+        return ST.compare(fld, target, robust)
+    except ValueError as e:
+        if not tolerant:
+            raise
+        log(f"  WARNING: {e} -- metrics recorded as NaN (allow_no_sheet)")
+        nan = float("nan")
+        return {"pattern_corr": nan, "span_cur": nan, "span_tgt": nan, "amp_ratio": nan, "resid_mean": nan, "n_cells": 0}
 
 
 def _record(out, rec):
@@ -327,10 +387,13 @@ def _record(out, rec):
 
 def run_loop(out, sheet, target_path, planner, plant, n=3, max_passes=30, schema=P.DEFAULT_SCHEMA,
              feed_dir_cam=None, camera=S.DEFAULT_CAMERA, up_toward_camera=True, allow_rot90=False,
-             confirm=True, step=2.0, robust=True, resume=False, log=None, measurer=None, profile=None):
+             confirm=True, step=2.0, robust=True, resume=False, log=None, measurer=None, profile=None,
+             script=None, allow_no_sheet=False):
     """measurer (measure.RigMeasurer) + profile (model_newsheet.NewsheetModel) = the rig path (2026-10-28):
     captures are folders measured at the scan pose, the planner's plan_fields() takes the fields; the
-    fields are cropped and plane-removed by the measurer, so no clamp-band mask is applied here."""
+    fields are cropped and plane-removed by the measurer, so no clamp-band mask is applied here.
+    script = [{"wa": {...}, "passes": n}, ...]: no planner and no controller decisions, the blocks run as
+    listed (dry runs); everything is still measured and recorded. allow_no_sheet: the flat scan may hold no sheet."""
     log = log or (lambda *a: print(*a, flush=True))
     out = os.path.abspath(out)                     # the plants run tools from other folders
     os.makedirs(out, exist_ok=True)
@@ -364,8 +427,11 @@ def run_loop(out, sheet, target_path, planner, plant, n=3, max_passes=30, schema
             measurer.preview(os.path.join(ref_dir, "reference_preview.png"), cur)
             log(f"reference: {measurer.info}")
             if measurer.info.get("inside_fraction", 0) < 0.5 or cur.meta.get("coverage_observed", 0) < 0.3:
-                raise RuntimeError(f"no sheet found in the flat scan {base.pass_dir}: inside_fraction {measurer.info.get('inside_fraction')}, "
-                                   f"coverage {cur.meta.get('coverage_observed')} (is the sheet gripped and at the scan pose? see {ref_dir}/reference_preview.png)")
+                msg = (f"no sheet found in the flat scan {base.pass_dir}: inside_fraction {measurer.info.get('inside_fraction')}, "
+                       f"coverage {cur.meta.get('coverage_observed')} (is the sheet gripped and at the scan pose? see {ref_dir}/reference_preview.png)")
+                if not allow_no_sheet:
+                    raise RuntimeError(msg)
+                log("WARNING: " + msg + " -- continuing (allow_no_sheet)")
             log(f"flat field: z {cur.zrange()[0]:.2f}..{cur.zrange()[1]:.2f} mm, coverage of the observed region {cur.meta['coverage_observed']}")
         elif base.points is not None:
             if feed_dir_cam is None:
@@ -386,25 +452,40 @@ def run_loop(out, sheet, target_path, planner, plant, n=3, max_passes=30, schema
         _save_field(cur, os.path.join(r0, "field_reference"), profile)
         _save_field(target, os.path.join(out, "target"), profile)
         state = ST.LoopState(max_passes, robust)
-        state.record_initial(ST.compare(cur, target, robust))
+        state.record_initial(_compare(cur, target, robust, allow_no_sheet, log))
         first_round = 1
     last_field = os.path.join(out, "round_00", "field_reference.npz") if not resume else saved["last_field"]
     r = first_round
     while True:
-        if state.check_stop():
+        if script is not None:
+            if r - 1 >= len(script):
+                state.stopped, state.reason = True, "script_done"; break
+            state.replans.append(state.scans[-1])                         # metrics logged, no stop rule
+        elif state.check_stop():
             break
         rd = os.path.join(out, f"round_{r:02d}")
-        if rig:
+        if script is not None:
+            os.makedirs(rd, exist_ok=True)
+            entry = script[r - 1]
+            first = {**entry["wa"], "n": int(entry["passes"])}
+            res = {"was": [first], "plan": None, "secs": 0.0, "scripted": True}
+            if profile is not None:
+                profile.render(cur, os.path.join(rd, "cur.png")); profile.render(target, os.path.join(rd, "tgt.png"))
+        elif rig:
             res = planner.plan_fields(cur, target, profile.history(state.history), rd)
         else:
             res = P.predict(cur, target, state.history, planner, rd, schema=schema)
         rec = {"round": r, "time": time.strftime("%Y-%m-%d %H:%M:%S"), "before": state.scans[-1], "plan": res.get("was"),
-               "plan_raw": res.get("plan"), "model_secs": res.get("secs"), "sampled": res.get("sampled"), "history_given": state.history[:]}
+               "plan_raw": res.get("plan"), "model_secs": res.get("secs"), "sampled": res.get("sampled"), "history_given": state.history[:],
+               "scripted": script is not None}
         if res["was"] is None:
             state.stopped, state.reason = True, "plan_failure"
             _record(out, {**rec, "stop": state.reason}); break
         first = res["was"][0]
-        k = state.block_size(first, n)
+        if script is not None:
+            k = int(first["n"]); state.block_reason = f"scripted: {k} pass(es) as listed (no controller decision)"
+        else:
+            k = state.block_size(first, n)
         rec.update({"chosen": first, "block_passes": k, "block_reason": getattr(state, "block_reason", "")})
         if k == 0:
             state.stopped, state.reason = True, "next_pass_would_overshoot"
@@ -413,15 +494,19 @@ def run_loop(out, sheet, target_path, planner, plant, n=3, max_passes=30, schema
         if problems:
             state.stopped, state.reason = True, f"not_executable: {problems[0][1]}"
             _record(out, {**rec, "stop": state.reason}); break
+        spec.set_directions(tps[0], getattr(plant, "next_dir", "l2r"))
         rec["toolpath"] = {"id": tps[0]["id"], "passes": k, "robot": tps[0]["robot"], "ours": tps[0].get("ours"),
+                           "start_direction": tps[0]["start_direction"], "pass_directions": tps[0]["pass_directions"],
                            "n_pivots": len(tps[0]["pivots_xy_mm"]), "pivots_xy_mm": tps[0]["pivots_xy_mm"]}
-        doc = spec.toolpath_doc(sheet, tps, note=f"round {r}: first entry of the model plan, {k} pass(es)")
+        doc = spec.toolpath_doc(sheet, tps, note=f"round {r}: {'scripted block' if script is not None else 'first entry of the model plan'}, {k} pass(es), "
+                                                 f"pass 1 {tps[0]['start_direction']}")
         spec.write_toolpath_json(os.path.join(rd, "toolpath.json"), doc)
         spec.preview_png(doc, os.path.join(rd, "preview.png"))
+        _replan_png(rd, rec, doc, cur, target)
         m = state.scans[-1]
         log(f"round {r}: amp {m['amp_ratio']:.3f}, corr {m['pattern_corr']:.4f} -> {k} pass(es) of "
-            f"WA ({first['cx']:.0f},{first['cy']:.0f}) {first['wx']:.0f}x{first['wy']:.0f} rot {first['rot']} N {first['N']}"
-            f"  [{getattr(state, 'block_reason', '')}]")
+            f"WA ({first['cx']:.0f},{first['cy']:.0f}) {first['wx']:.0f}x{first['wy']:.0f} rot {first['rot']} N {first['N']}, "
+            f"passes {' '.join('L>R' if d == 'l2r' else 'R>L' for d in tps[0]['pass_directions'])}  [{getattr(state, 'block_reason', '')}]")
         if confirm and input(f"  execute round {r} ({rd}/preview.png)? [y/N] ").strip().lower() != "y":
             state.stopped, state.reason = True, "stopped_by_operator"
             _record(out, {**rec, "stop": state.reason}); break
@@ -437,7 +522,7 @@ def run_loop(out, sheet, target_path, planner, plant, n=3, max_passes=30, schema
                 name = os.path.join(rd, f"field_{cap.toolpath_id}_capture{cap.pass_index}")
                 _save_field(fld, name, profile)
                 last_field, cur = name + ".npz", fld
-                mt = ST.compare(fld, target, robust)
+                mt = _compare(fld, target, robust, allow_no_sheet, log)
                 final = i == len(caps) - 1
                 if final:
                     state.record_block(mt, first, r, cap.toolpath_id, cap.pass_index, executed)

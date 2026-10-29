@@ -76,7 +76,8 @@ def main(root):
         ctrl = f"{rec.get('block_passes', '?')} pass(es)<br><small>{rec.get('block_reason', '')}</small>"
         tp = rec.get("toolpath") or {}
         rb = tp.get("robot") or {}
-        tp_txt = (f"{tp.get('id')} x{tp.get('passes')}: N {rb.get('zigzag_N')}, lv {rb.get('zigzag_lv_mm')}, alpha {rb.get('zigzag_alpha_deg')}, "
+        dirs = " ".join("L>R" if d == "l2r" else "R>L" for d in (tp.get("pass_directions") or []))
+        tp_txt = (f"{tp.get('id')} x{tp.get('passes')} [{dirs}]: N {rb.get('zigzag_N')}, lv {rb.get('zigzag_lv_mm')}, alpha {rb.get('zigzag_alpha_deg')}, "
                   f"cx {rb.get('center_x_mm')}, start {rb.get('start_mm')}, {tp.get('n_pivots')} pivots") if tp else "(none)"
         ro = rec.get("robot") or {}
         ro_txt = (f"`{ntpath.basename(str(ro.get('output_dir') or '').rstrip(chr(92) + '/'))}` captures {sorted(ro.get('captures', {}))}"
@@ -93,8 +94,8 @@ def main(root):
             L.append(f"Controller: {rec['block_reason']}  ")
         if rec.get("history_given") is not None:
             L.append(f"History given to the model: `{json.dumps(rec['history_given'])}`  ")
-        imgs = [os.path.join(rd, "preview.png")] + sorted(glob.glob(os.path.join(rd, "robot", "run_*", "zigzag_preview.png"))) \
-             + [os.path.join(rd, "cur.png"), os.path.join(rd, "tgt.png")] + sorted(glob.glob(os.path.join(rd, "field_*.png")))
+        imgs = [os.path.join(rd, "replan.png"), os.path.join(rd, "preview.png")] + sorted(glob.glob(os.path.join(rd, "robot", "run_*", "zigzag_preview.png"))) \
+             + sorted(glob.glob(os.path.join(rd, "field_*.png")))
         L.append(" ".join(f"![{os.path.basename(p)}]({_rel(root, p)})" for p in imgs if os.path.exists(p)))
         ro = rec.get("robot") or {}
         ri = os.path.join(ro.get("local_copy") or "", "run_info.txt") if ro.get("local_copy") else None
