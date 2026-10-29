@@ -23,6 +23,9 @@ def _rel(root, p):
 
 
 def load_rounds(root):
+    live = sorted(glob.glob(os.path.join(root, "round_[0-9][0-9]", "round.json")))
+    if live:                                                    # written before execution and updated after (2026-10-29)
+        return [json.load(open(p)) for p in live]
     p = os.path.join(root, "rounds.jsonl")
     if os.path.exists(p):
         return [json.loads(l) for l in open(p) if l.strip()]
@@ -47,7 +50,7 @@ def load_rounds(root):
     return out
 
 
-def main(root):
+def main(root, quiet=False):
     root = os.path.abspath(root)
     st = json.load(open(os.path.join(root, "state.json"))) if os.path.exists(os.path.join(root, "state.json")) else {}
     s = st.get("state", {})
@@ -84,7 +87,7 @@ def main(root):
                   + (f" {ro.get('secs')} s" if ro.get("secs") else "")) if ro else "(none)"
         meas = "<br>".join(f"{m.get('capture', m.get('pass'))}: {m.get('amp_ratio')} / {m.get('pattern_corr')} / {m.get('z_min', '')}..{m.get('z_max', '')}"
                            + (" **(block)**" if m.get("block_measurement") else "") for m in rec.get("measured") or []) or "(none)"
-        stop = f"<br>stop: {rec['stop']}" if rec.get("stop") else ""
+        stop = (f"<br>stop: {rec['stop']}" if rec.get("stop") else "") + (f"<br><i>{rec['status']}</i>" if rec.get("status") else "")
         L.append(f"| {rec['round']} | {b.get('amp_ratio')} / {b.get('pattern_corr')} | {plan_txt} | {ctrl}{stop} | {tp_txt} | {ro_txt} | {meas} |")
     L.append("")
     for rec in rounds:
@@ -103,7 +106,8 @@ def main(root):
             L.append(f"His run folder: `{_rel(root, ro['local_copy'])}` (run_info.txt, force CSVs, point clouds)  ")
         L.append("")
     open(os.path.join(root, "TRIAL.md"), "w").write("\n".join(L))
-    print(os.path.join(root, "TRIAL.md"), f"({len(rounds)} rounds)")
+    if not quiet:
+        print(os.path.join(root, "TRIAL.md"), f"({len(rounds)} rounds)")
 
 
 if __name__ == "__main__":

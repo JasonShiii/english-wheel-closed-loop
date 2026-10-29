@@ -254,6 +254,44 @@ class FilePlant:
         self.k, self.next_dir = d.get("k", 0), d.get("next_dir", "l2r")
 
 
+class _LiveMirror:
+    """copies his run folder (outputs/<timestamp>/, created after t0) into <out>/run_<timestamp>/ while his driver
+    runs: every file once its size has stopped changing; a capture folder is announced when its PLYs are in"""
+    def __init__(self, outputs, out, t0):
+        self.outputs, self.out, self.t0, self.seen, self.sizes, self.announced = outputs, out, t0, set(), {}, set()
+
+    def step(self, final=False):
+        try:
+            runs = [d for d in glob.glob(os.path.join(self.outputs, "*")) if os.path.isdir(d) and os.path.getctime(d) >= self.t0 - 5]
+        except OSError:
+            return
+        for run in runs:
+            dst = os.path.join(self.out, "run_" + os.path.basename(run))
+            for root, _, files in os.walk(run):
+                for f in files:
+                    src = os.path.join(root, f)
+                    try:
+                        sz = os.path.getsize(src)
+                    except OSError:
+                        continue
+                    key = (src, sz)
+                    if key in self.seen:
+                        continue
+                    if final or self.sizes.get(src) == sz:          # unchanged since the last look: written
+                        rel = os.path.relpath(src, run); tgt = os.path.join(dst, rel)
+                        os.makedirs(os.path.dirname(tgt), exist_ok=True)
+                        try:
+                            shutil.copy2(src, tgt); self.seen.add(key)
+                        except OSError:
+                            pass
+                    self.sizes[src] = sz
+            for cap in glob.glob(os.path.join(dst, "pointcloud_pass*")):
+                plys = glob.glob(os.path.join(cap, "device_*_pointcloud_*.ply"))
+                if len(plys) >= 3 and cap not in self.announced:
+                    self.announced.add(cap)
+                    print(f"  [live] scan saved: {cap} ({len(plys)} PLY)", flush=True)
+
+
 class DobotPlant:
     """the Dobot CR5A cell (2026-10-28) through Danish's own driver, run by robot_dobot/run_toolpath_dobot.py
     in this Python with cwd = his Scripts folder. baseline() = scan pose + flat scan (pointcloud_pass0);
@@ -279,7 +317,13 @@ class DobotPlant:
         if mode == "baseline" and self.sheet is not None:
             sj = os.path.join(out, "sheet.json"); json.dump(self.sheet.to_dict(), open(sj, "w"), indent=1); cmd += ["--sheet-json", sj]
         print("  >>> " + " ".join(f'"{c}"' if " " in c else c for c in cmd), flush=True)
-        r = subprocess.run(cmd, cwd=self.scripts, env={**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"})
+        t0 = time.time()
+        proc = subprocess.Popen(cmd, cwd=self.scripts, env={**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"})
+        mirror = _LiveMirror(os.path.join(self.scripts, "outputs"), out, t0)
+        while proc.poll() is None:                 # copy his files into the loop folder as they are written
+            mirror.step(); time.sleep(2.0)
+        mirror.step(final=True)
+        r = proc
         p = os.path.join(out, "robot_run.json")
         if not os.path.exists(p):
             raise RuntimeError(f"robot adapter exited {r.returncode} without {p}")
@@ -376,6 +420,18 @@ def _compare(fld, target, robust, tolerant, log):
         log(f"  WARNING: {e} -- metrics recorded as NaN (allow_no_sheet)")
         nan = float("nan")
         return {"pattern_corr": nan, "span_cur": nan, "span_tgt": nan, "amp_ratio": nan, "resid_mean": nan, "n_cells": 0}
+
+
+def _save_round(out, rd, rec, status):
+    """round_NN/round.json (rewritten at every stage: planned -> executing -> done) and TRIAL.md refreshed, so the
+    record of a round exists BEFORE the robot moves"""
+    try:
+        os.makedirs(rd, exist_ok=True)
+        json.dump({**rec, "status": status, "updated": time.strftime("%Y-%m-%d %H:%M:%S")}, open(os.path.join(rd, "round.json"), "w"), indent=1)
+        from . import trial_report
+        trial_report.main(out, quiet=True)
+    except Exception as e:                       # the record must never stop the loop
+        print(f"  (record not written: {e})", flush=True)
 
 
 def _record(out, rec):
@@ -480,7 +536,7 @@ def run_loop(out, sheet, target_path, planner, plant, n=3, max_passes=30, schema
                "scripted": script is not None}
         if res["was"] is None:
             state.stopped, state.reason = True, "plan_failure"
-            _record(out, {**rec, "stop": state.reason}); break
+            _save_round(out, rd, {**rec, "stop": state.reason}, "stopped before execution"); _record(out, {**rec, "stop": state.reason}); break
         first = res["was"][0]
         if script is not None:
             k = int(first["n"]); state.block_reason = f"scripted: {k} pass(es) as listed (no controller decision)"
@@ -489,11 +545,11 @@ def run_loop(out, sheet, target_path, planner, plant, n=3, max_passes=30, schema
         rec.update({"chosen": first, "block_passes": k, "block_reason": getattr(state, "block_reason", "")})
         if k == 0:
             state.stopped, state.reason = True, "next_pass_would_overshoot"
-            _record(out, {**rec, "stop": state.reason}); break
+            _save_round(out, rd, {**rec, "stop": state.reason}, "stopped before execution"); _record(out, {**rec, "stop": state.reason}); break
         tps, problems = spec.plan_to_toolpaths([{**first, "n": k}], sheet, allow_rot90=allow_rot90)
         if problems:
             state.stopped, state.reason = True, f"not_executable: {problems[0][1]}"
-            _record(out, {**rec, "stop": state.reason}); break
+            _save_round(out, rd, {**rec, "stop": state.reason}, "stopped before execution"); _record(out, {**rec, "stop": state.reason}); break
         spec.set_directions(tps[0], getattr(plant, "next_dir", "l2r"))
         rec["toolpath"] = {"id": tps[0]["id"], "passes": k, "robot": tps[0]["robot"], "ours": tps[0].get("ours"),
                            "start_direction": tps[0]["start_direction"], "pass_directions": tps[0]["pass_directions"],
@@ -503,13 +559,16 @@ def run_loop(out, sheet, target_path, planner, plant, n=3, max_passes=30, schema
         spec.write_toolpath_json(os.path.join(rd, "toolpath.json"), doc)
         spec.preview_png(doc, os.path.join(rd, "preview.png"))
         _replan_png(rd, rec, doc, cur, target)
+        _save_round(out, rd, rec, "planned: toolpath.json, preview.png and replan.png written; not executed yet")
         m = state.scans[-1]
         log(f"round {r}: amp {m['amp_ratio']:.3f}, corr {m['pattern_corr']:.4f} -> {k} pass(es) of "
             f"WA ({first['cx']:.0f},{first['cy']:.0f}) {first['wx']:.0f}x{first['wy']:.0f} rot {first['rot']} N {first['N']}, "
             f"passes {' '.join('L>R' if d == 'l2r' else 'R>L' for d in tps[0]['pass_directions'])}  [{getattr(state, 'block_reason', '')}]")
         if confirm and input(f"  execute round {r} ({rd}/preview.png)? [y/N] ").strip().lower() != "y":
             state.stopped, state.reason = True, "stopped_by_operator"
+            _save_round(out, rd, {**rec, "stop": state.reason}, "not executed (operator)")
             _record(out, {**rec, "stop": state.reason}); break
+        _save_round(out, rd, rec, "executing on the robot")
         caps, executed = plant.execute(doc, rd)
         state.record_executed(first, executed)
         rec.update({"robot": getattr(plant, "last_run", None), "executed": executed, "measured": []})
@@ -554,6 +613,7 @@ def run_loop(out, sheet, target_path, planner, plant, n=3, max_passes=30, schema
                 stop_now = stop_now or f"robot executed {executed}/{k} pass(es), {len(caps)} capture(s)"
         json.dump({"round": r, "last_field": last_field, "state": state.to_dict(), "plant": plant.state()},
                   open(st_path, "w"), indent=1)
+        _save_round(out, rd, {**rec, "stop": stop_now}, "done: executed and measured")
         _record(out, {**rec, "stop": stop_now})
         if stop_now:
             state.stopped, state.reason = True, stop_now

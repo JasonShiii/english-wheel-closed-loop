@@ -12,6 +12,11 @@ Before his driver runs, in memory only (zigzag_forming_oldclamps = zf):
                              (his per-pivot safety check then runs on OUR sheet and zone)
   zf.ZIGZAG_*             <- the file's robot block (run_info.txt stays truthful); zf.NUM_PASSES <- the toolpath's passes
   zf._capture_pointcloud_snapshot("pointcloud_pass0") skipped in `run` (the loop measured that state already)
+  one block = one scan (2026-10-29): between the passes of a block his driver's move to the scan pose and the scan are
+                             skipped; where the last pass ends on the next pass's start (same zigzag, reversed -- checked on
+                             his own motion plans before any motion) the unload, the reposition and the reload are skipped
+                             too: the wheel stays loaded and the next pass starts from the end point. Otherwise his normal
+                             unload -> reposition -> reload runs. The scan after the LAST pass is the block's measurement.
   zf.run_zigzag_forming   -> no-op in `baseline` (his run_step_7_5 then only scans and parks at pos_9)
   zf._prompt_pass_radii   -> kept (the operator enters Rx/Rz between passes as today) unless --auto-radii
   os.startfile            -> no image viewer unless --show-preview; wheel_force.plot_last_wheel_force_path -> non-blocking
@@ -86,6 +91,99 @@ def patch_run_info(extra):
     def write_run_info(output_dir, **params):
         return _w(output_dir, **params, **extra)
     ro.write_run_info = write_run_info
+
+
+def _pose_gap(zf, a, b):
+    """(position mm, rotation deg) between two of his poses [x, y, z (m), rotation vector]"""
+    import math
+    dp = 1000.0 * math.sqrt(sum((a[i] - b[i]) ** 2 for i in range(3)))
+    Ra, Rb = zf._rotation_matrix(a[3:6]), zf._rotation_matrix(b[3:6])
+    tr = sum(Ra[k][i] * Rb[k][i] for i in range(3) for k in range(3))          # trace(Ra^T Rb)
+    return dp, math.degrees(math.acos(max(-1.0, min(1.0, (tr - 1.0) / 2.0))))
+
+
+def turnaround_coincides(zf, piv, tol_mm=0.5, tol_deg=0.5):
+    """does the last pose of a pass end where the next (reversed) pass starts? his own _build_motion_plan on both
+    directions, no robot needed"""
+    a, _, _ = zf._build_motion_plan(list(piv)[::-1])          # pass 1 as his driver runs it (pivots reversed = his 'l2r')
+    b, _, _ = zf._build_motion_plan(list(piv))                # pass 2 (his 'r2l')
+    end_a, start_b = a[-1][2][-1], b[0][2][0]
+    d1 = _pose_gap(zf, end_a, start_b)
+    end_b, start_a = b[-1][2][-1], a[0][2][0]
+    d2 = _pose_gap(zf, end_b, start_a)
+    ok = max(d1[0], d2[0]) <= tol_mm and max(d1[1], d2[1]) <= tol_deg
+    return ok, {"end1_to_start2_mm_deg": [round(d1[0], 3), round(d1[1], 3)], "end2_to_start1_mm_deg": [round(d2[0], 3), round(d2[1], 3)]}
+
+
+def continuous_block(zf, n_passes, coincide, log=print):
+    """wrap his pass loop so that a block of n_passes is: load once, the passes back to back (or with his normal
+    unload/reposition/reload where the ends do not coincide), unload, scan once. Returns the bookkeeping dict."""
+    st = {"done": 0, "between": False, "expect_start": False, "last_pose": None, "skipped": [], "n": n_passes, "coincide": coincide}
+    pc_pose = list(zf.pointcloud_position)
+    o_exec, o_unload, o_movel, o_arc, o_seq = zf._execute_pass, zf._unload_wheel_by_recorded_pulses, zf._movel_single, zf._arc_single, zf._send_sequence
+    o_cap, o_reload, o_prompt = zf._capture_pointcloud_snapshot, zf._reload_wheel, zf._prompt_pass_radii
+
+    def intermediate():
+        return st["done"] < n_passes
+
+    def _execute_pass(*a, **k):
+        st["between"] = False
+        r = o_exec(*a, **k)
+        st["done"] += 1
+        if intermediate():
+            st["between"] = True
+        return r
+
+    def _unload(pulse_count):
+        if st["between"] and coincide:
+            st["skipped"].append(f"unload after pass {st['done']}"); log(f"[continuous] pass {st['done']} ends where pass {st['done'] + 1} starts: wheel stays loaded")
+            return None
+        return o_unload(pulse_count)
+
+    def _movel(pose, *a, **k):
+        if st["between"] and list(pose) == pc_pose:
+            st["skipped"].append(f"scan-pose move after pass {st['done']}"); log(f"[continuous] no scan between passes {st['done']} and {st['done'] + 1} (one scan per block)")
+            return None
+        if st["between"] and st["expect_start"]:
+            st["expect_start"] = False
+            if coincide:
+                gap = _pose_gap(zf, st["last_pose"], pose) if st["last_pose"] is not None else (float("inf"), float("inf"))
+                if gap[0] > 1.0 or gap[1] > 1.0:
+                    raise RuntimeError(f"continuous pass: next start is {gap[0]:.2f} mm / {gap[1]:.2f} deg from the last pose (expected 0)")
+                st["skipped"].append(f"reposition after pass {st['done']} ({gap[0]:.3f} mm, {gap[1]:.3f} deg)")
+                log(f"[continuous] next pass starts at the end point ({gap[0]:.3f} mm, {gap[1]:.3f} deg): no reposition")
+                return None
+        st["last_pose"] = list(pose)
+        return o_movel(pose, *a, **k)
+
+    def _arc(pose_mid, pose_end, *a, **k):
+        st["last_pose"] = list(pose_end)
+        return o_arc(pose_mid, pose_end, *a, **k)
+
+    def _seq(poses, *a, **k):
+        st["last_pose"] = list(poses[-1])
+        return o_seq(poses, *a, **k)
+
+    def _capture(subdir_name):
+        if st["between"]:
+            st["skipped"].append(f"scan after pass {st['done']}")
+            return None
+        return o_cap(subdir_name)
+
+    def _prompt(pass_num, rx, rz, dir_str=""):
+        st["expect_start"] = True
+        return o_prompt(pass_num, rx, rz, dir_str)
+
+    def _reload():
+        if st["between"] and coincide:
+            st["skipped"].append(f"reload before pass {st['done'] + 1}")
+            return None
+        return o_reload()
+
+    zf._execute_pass, zf._unload_wheel_by_recorded_pulses, zf._movel_single = _execute_pass, _unload, _movel
+    zf._arc_single, zf._send_sequence, zf._capture_pointcloud_snapshot = _arc, _seq, _capture
+    zf._prompt_pass_radii, zf._reload_wheel = _prompt, _reload
+    return st
 
 
 def safety(zf, piv):
@@ -209,6 +307,19 @@ def main():
             return 0
 
     quiet(zf, wf, a.mode, a.show_preview)
+    block = None
+    if a.mode == "run":
+        if not a.auto_radii and zf.NUM_PASSES > 1:
+            print("[run_toolpath_dobot] Rx/Rz prompt kept: the passes of this block are NOT run back to back "
+                  "(changed radii change the plan); still one scan per block", flush=True)
+            coincide, gaps = False, {}
+        else:
+            coincide, gaps = turnaround_coincides(zf, piv)
+        block = continuous_block(zf, zf.NUM_PASSES, coincide)
+        res["continuous"] = {"coincide": coincide, **gaps}
+        print(f"[run_toolpath_dobot] block: {zf.NUM_PASSES} pass(es), "
+              + ("back to back, wheel loaded throughout" if coincide else "his unload/reposition/reload between passes")
+              + f", ONE scan after the last pass; turnaround check {gaps}", flush=True)
     print(f"[run_toolpath_dobot] {a.mode}: running {DRIVER} ...", flush=True)
     err = None
     try:
@@ -220,11 +331,12 @@ def main():
     runs = [d for d in glob.glob(os.path.join(scripts, "outputs", "*")) if os.path.isdir(d) and os.path.getmtime(d) >= t0 - 5]
     run_dir = max(runs, key=os.path.getmtime) if runs else None
     caps = captures_of(run_dir) if run_dir else {}
-    want = ["0"] if a.mode == "baseline" else [str(i) for i in range(1, zf.NUM_PASSES + 1)]
+    want = ["0"] if a.mode == "baseline" else [str(zf.NUM_PASSES)]
     missing = [k for k in want if k not in caps]
     if err is None and missing:                      # his driver catches its own errors and prints them: report the symptom
         err = f"driver finished without capture(s) pointcloud_pass{','.join(missing)} (see its output above; robot alarm / control mode / camera)"
-    res.update({"output_dir": run_dir, "captures": caps, "passes_done": len([k for k in caps if k != "0"]),
+    done = block["done"] if block is not None else 0
+    res.update({"output_dir": run_dir, "captures": caps, "passes_done": done, "skipped_between_passes": block["skipped"] if block else [],
                 "ok": not missing and err is None, "error": err, "secs": round(time.time() - t0)})
     json.dump(res, open(os.path.join(out, "robot_run.json"), "w"), indent=1)
     print(f"[run_toolpath_dobot] done: ok={res['ok']} error={err} run folder {run_dir} captures {sorted(caps)}", flush=True)
