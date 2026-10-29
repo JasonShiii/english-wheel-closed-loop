@@ -2,6 +2,7 @@
 # each pass. Scripted blocks: no planner, no controller decisions; everything measured and recorded under loops\<OutName>.
 param([string]$OutName = "dry_two_zigzags_nopanel")
 $ErrorActionPreference = "Continue"
+$env:PYTHONIOENCODING = "utf-8"; $env:PYTHONUTF8 = "1"; [Console]::OutputEncoding = [Text.Encoding]::UTF8
 $py = "C:\anaconda3\envs\EnglishWheel\python.exe"; $repo = "$HOME\english-wheel-closed-loop"; $scripts = "$HOME\Documents\GitHub\English-Wheel---DoBot-Files\Scripts"
 Set-Location "$repo\real_testbed"
 $out = "$repo\loops\$OutName"

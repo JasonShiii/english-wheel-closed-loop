@@ -122,6 +122,13 @@ def captures_of(run_dir):
 
 
 def main():
+    # his driver prints non-ASCII (theta, arrows); a console takes it, a pipe (ssh, the loop's subprocess) defaults to
+    # cp1252 on Windows and raises UnicodeEncodeError mid-pass (2026-10-29 dry run: his handler unloaded and stopped)
+    for st in (sys.stdout, sys.stderr):
+        try:
+            st.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("mode", choices=["check", "baseline", "run"])
     ap.add_argument("toolpath", nargs="?")

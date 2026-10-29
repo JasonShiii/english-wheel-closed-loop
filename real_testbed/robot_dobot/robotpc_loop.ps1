@@ -4,6 +4,7 @@ param([string]$OutName = "sheet01", [string]$Target = "S1_t042_c4", [int]$N = 3,
 #   powershell -ExecutionPolicy Bypass -File C:\Users\"Ping Guo Lab"\robotpc_loop.ps1 -OutName sheet01 -Confirm -Show
 # -Confirm: the loop asks before every block; -AskRadii: his Rx/Rz prompt between passes; log = loops\<OutName>.log
 $ErrorActionPreference = "Continue"
+$env:PYTHONIOENCODING = "utf-8"; $env:PYTHONUTF8 = "1"; [Console]::OutputEncoding = [Text.Encoding]::UTF8
 $py = "C:\anaconda3\envs\EnglishWheel\python.exe"; $repo = "$HOME\english-wheel-closed-loop"; $scripts = "$HOME\Documents\GitHub\English-Wheel---DoBot-Files\Scripts"
 Set-Location "$repo\real_testbed"
 $out = "$repo\loops\$OutName"

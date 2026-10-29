@@ -279,7 +279,7 @@ class DobotPlant:
         if mode == "baseline" and self.sheet is not None:
             sj = os.path.join(out, "sheet.json"); json.dump(self.sheet.to_dict(), open(sj, "w"), indent=1); cmd += ["--sheet-json", sj]
         print("  >>> " + " ".join(f'"{c}"' if " " in c else c for c in cmd), flush=True)
-        r = subprocess.run(cmd, cwd=self.scripts)
+        r = subprocess.run(cmd, cwd=self.scripts, env={**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"})
         p = os.path.join(out, "robot_run.json")
         if not os.path.exists(p):
             raise RuntimeError(f"robot adapter exited {r.returncode} without {p}")
