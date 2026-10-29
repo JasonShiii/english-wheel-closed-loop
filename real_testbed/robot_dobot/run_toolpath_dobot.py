@@ -163,8 +163,11 @@ def main():
     run_dir = max(runs, key=os.path.getmtime) if runs else None
     caps = captures_of(run_dir) if run_dir else {}
     want = ["0"] if a.mode == "baseline" else [str(i) for i in range(1, zf.NUM_PASSES + 1)]
+    missing = [k for k in want if k not in caps]
+    if err is None and missing:                      # his driver catches its own errors and prints them: report the symptom
+        err = f"driver finished without capture(s) pointcloud_pass{','.join(missing)} (see its output above; robot alarm / control mode / camera)"
     res.update({"output_dir": run_dir, "captures": caps, "passes_done": len([k for k in caps if k != "0"]),
-                "ok": err is None and all(k in caps for k in want), "error": err, "secs": round(time.time() - t0)})
+                "ok": not missing and err is None, "error": err, "secs": round(time.time() - t0)})
     json.dump(res, open(os.path.join(out, "robot_run.json"), "w"), indent=1)
     print(f"[run_toolpath_dobot] done: ok={res['ok']} error={err} run folder {run_dir} captures {sorted(caps)}", flush=True)
     return 0 if res["ok"] else 2

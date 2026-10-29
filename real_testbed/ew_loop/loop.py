@@ -341,6 +341,9 @@ def run_loop(out, sheet, target_path, planner, plant, n=3, max_passes=30, schema
             measurer.save(ref_dir)
             measurer.preview(os.path.join(ref_dir, "reference_preview.png"), cur)
             log(f"reference: {measurer.info}")
+            if measurer.info.get("inside_fraction", 0) < 0.5 or cur.meta.get("coverage_observed", 0) < 0.3:
+                raise RuntimeError(f"no sheet found in the flat scan {base.pass_dir}: inside_fraction {measurer.info.get('inside_fraction')}, "
+                                   f"coverage {cur.meta.get('coverage_observed')} (is the sheet gripped and at the scan pose? see {ref_dir}/reference_preview.png)")
             log(f"flat field: z {cur.zrange()[0]:.2f}..{cur.zrange()[1]:.2f} mm, coverage of the observed region {cur.meta['coverage_observed']}")
         elif base.points is not None:
             if feed_dir_cam is None:
