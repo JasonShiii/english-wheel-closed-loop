@@ -6,6 +6,7 @@ Reads rounds.jsonl (written by run_loop) and falls back to round_NN/{response,to
 """
 import glob
 import json
+import ntpath
 import os
 import sys
 
@@ -78,7 +79,7 @@ def main(root):
         tp_txt = (f"{tp.get('id')} x{tp.get('passes')}: N {rb.get('zigzag_N')}, lv {rb.get('zigzag_lv_mm')}, alpha {rb.get('zigzag_alpha_deg')}, "
                   f"cx {rb.get('center_x_mm')}, start {rb.get('start_mm')}, {tp.get('n_pivots')} pivots") if tp else "(none)"
         ro = rec.get("robot") or {}
-        ro_txt = (f"`{os.path.basename(str(ro.get('output_dir') or '').rstrip(chr(92) + '/'))}` captures {sorted(ro.get('captures', {}))}"
+        ro_txt = (f"`{ntpath.basename(str(ro.get('output_dir') or '').rstrip(chr(92) + '/'))}` captures {sorted(ro.get('captures', {}))}"
                   + (f" {ro.get('secs')} s" if ro.get("secs") else "")) if ro else "(none)"
         meas = "<br>".join(f"{m.get('capture', m.get('pass'))}: {m.get('amp_ratio')} / {m.get('pattern_corr')} / {m.get('z_min', '')}..{m.get('z_max', '')}"
                            + (" **(block)**" if m.get("block_measurement") else "") for m in rec.get("measured") or []) or "(none)"
