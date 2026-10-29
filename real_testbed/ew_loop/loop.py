@@ -404,6 +404,8 @@ def _replan_png(rd, rec, doc, cur, target):
         lines.append(f"toolpath {tp['id']}: {tp['passes']} pass(es) " + ", ".join(f"{i + 1}:{'L>R' if d == 'l2r' else 'R>L'}" for i, d in enumerate(dirs))
                      + f" | zigzag_lv {rb['zigzag_lv_mm']}  alpha {rb['zigzag_alpha_deg']}  N {rb['zigzag_N']}  rot {rb['rotation_deg']}  "
                        f"centre_x {rb['center_x_mm']}  start {rb['start_mm']}  ({len(tp['pivots_xy_mm'])} pivots)")
+    import textwrap
+    lines = [w for l in lines for w in (textwrap.wrap(l, 190, subsequent_indent="      ") or [""])]     # long controller reasons stay on the page
     ax = fig.add_subplot(gs[1, :]); ax.set_axis_off()
     ax.text(0.0, 1.0, "\n".join(lines), family="monospace", fontsize=9, va="top", ha="left", transform=ax.transAxes)
     fig.tight_layout(); fig.savefig(os.path.join(rd, "replan.png"), dpi=110); plt.close(fig)
