@@ -59,6 +59,11 @@ scan pose, captured `pointcloud_pass0`, parked at pos_9 (20 s) -> the loop's ref
 found" (coverage 0.12), 26 s in all. Everything but the sheet is verified; the same command with the sheet gripped
 is the live run. The tunnel from ideas2 runs under a reconnect loop (`tunnel_keepalive.sh`, scratchpad of the session).
 
+Trial records (2026-10-29): every loop folder is self-contained (his run folders copied in, `rounds.jsonl` with the
+controller's reasons, `TRIAL.md` by `ew_loop/trial_report.py`); `trials/pull_trial.py <name>` brings it to
+`real_testbed/trials/<name>/`. The real sheet is 1.0 mm thick (user, 2026-10-29): `rigloop --thickness` default 1.0
+goes into toolpath.json and his run_info.txt; the model's prompt keeps the training text (0.6).
+
 ## 2. Before leaving (ideas2)
 
 ```

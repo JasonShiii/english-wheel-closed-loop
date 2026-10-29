@@ -19,8 +19,10 @@ resumed after an interruption.
 import glob
 import json
 import os
+import shutil
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from typing import Optional
 
@@ -259,6 +261,7 @@ class DobotPlant:
     def __init__(self, scripts, python=None, margin_top=12.0, auto_radii=False, show_preview=False, sheet=None):
         self.scripts, self.python, self.margin_top, self.auto_radii = os.path.abspath(scripts), python or sys.executable, margin_top, auto_radii
         self.show_preview, self.sheet, self.k = show_preview, sheet, 0
+        self.last_run = None
         if not os.path.exists(os.path.join(self.scripts, "run_zigzag_oldclamps.py")):
             raise FileNotFoundError(f"{self.scripts}: run_zigzag_oldclamps.py not found")
 
@@ -275,6 +278,15 @@ class DobotPlant:
         if not os.path.exists(p):
             raise RuntimeError(f"robot adapter exited {r.returncode} without {p}")
         res = json.load(open(p))
+        # his run folder (run_info.txt, force CSVs, zigzag_preview.png, path CSVs, pointcloud_pass*) is copied next to
+        # robot_run.json so the loop folder holds the whole trial; the loop measures the copy
+        if res.get("output_dir") and os.path.isdir(res["output_dir"]):
+            local = os.path.join(out, "run_" + os.path.basename(res["output_dir"].rstrip("\\/")))
+            shutil.copytree(res["output_dir"], local, dirs_exist_ok=True)
+            res["local_copy"] = local
+            res["captures"] = {k: os.path.join(local, os.path.basename(v.rstrip("\\/"))) for k, v in res.get("captures", {}).items()}
+            json.dump(res, open(p, "w"), indent=1)
+        self.last_run = {k: res.get(k) for k in ("mode", "output_dir", "local_copy", "captures", "passes_done", "ok", "error", "secs")}
         if not res.get("ok"):
             raise RuntimeError(f"robot {mode} failed: {res.get('error')} (captures {sorted(res.get('captures', {}))}, run folder {res.get('output_dir')})")
         return res
@@ -304,6 +316,13 @@ class DobotPlant:
 def _save_field(fld, path_noext, profile=None):
     fld.save(path_noext + ".npz")
     (profile.render if profile is not None else frames.field_png)(fld, path_noext + ".png")
+
+
+def _record(out, rec):
+    """one line per round in OUT/rounds.jsonl: what was measured, what the model planned, what the controller
+    decided and why, what the robot was given and what came back (trial_report.py turns it into TRIAL.md)"""
+    with open(os.path.join(out, "rounds.jsonl"), "a") as f:
+        f.write(json.dumps(rec) + "\n")
 
 
 def run_loop(out, sheet, target_path, planner, plant, n=3, max_passes=30, schema=P.DEFAULT_SCHEMA,
@@ -379,29 +398,36 @@ def run_loop(out, sheet, target_path, planner, plant, n=3, max_passes=30, schema
             res = planner.plan_fields(cur, target, profile.history(state.history), rd)
         else:
             res = P.predict(cur, target, state.history, planner, rd, schema=schema)
+        rec = {"round": r, "time": time.strftime("%Y-%m-%d %H:%M:%S"), "before": state.scans[-1], "plan": res.get("was"),
+               "plan_raw": res.get("plan"), "model_secs": res.get("secs"), "sampled": res.get("sampled"), "history_given": state.history[:]}
         if res["was"] is None:
             state.stopped, state.reason = True, "plan_failure"
-            break
+            _record(out, {**rec, "stop": state.reason}); break
         first = res["was"][0]
         k = state.block_size(first, n)
+        rec.update({"chosen": first, "block_passes": k, "block_reason": getattr(state, "block_reason", "")})
         if k == 0:
             state.stopped, state.reason = True, "next_pass_would_overshoot"
-            break
+            _record(out, {**rec, "stop": state.reason}); break
         tps, problems = spec.plan_to_toolpaths([{**first, "n": k}], sheet, allow_rot90=allow_rot90)
         if problems:
             state.stopped, state.reason = True, f"not_executable: {problems[0][1]}"
-            break
+            _record(out, {**rec, "stop": state.reason}); break
+        rec["toolpath"] = {"id": tps[0]["id"], "passes": k, "robot": tps[0]["robot"], "ours": tps[0].get("ours"),
+                           "n_pivots": len(tps[0]["pivots_xy_mm"]), "pivots_xy_mm": tps[0]["pivots_xy_mm"]}
         doc = spec.toolpath_doc(sheet, tps, note=f"round {r}: first entry of the model plan, {k} pass(es)")
         spec.write_toolpath_json(os.path.join(rd, "toolpath.json"), doc)
         spec.preview_png(doc, os.path.join(rd, "preview.png"))
         m = state.scans[-1]
         log(f"round {r}: amp {m['amp_ratio']:.3f}, corr {m['pattern_corr']:.4f} -> {k} pass(es) of "
-            f"WA ({first['cx']:.0f},{first['cy']:.0f}) {first['wx']:.0f}x{first['wy']:.0f} rot {first['rot']} N {first['N']}")
+            f"WA ({first['cx']:.0f},{first['cy']:.0f}) {first['wx']:.0f}x{first['wy']:.0f} rot {first['rot']} N {first['N']}"
+            f"  [{getattr(state, 'block_reason', '')}]")
         if confirm and input(f"  execute round {r} ({rd}/preview.png)? [y/N] ").strip().lower() != "y":
             state.stopped, state.reason = True, "stopped_by_operator"
-            break
+            _record(out, {**rec, "stop": state.reason}); break
         caps, executed = plant.execute(doc, rd)
         state.record_executed(first, executed)
+        rec.update({"robot": getattr(plant, "last_run", None), "executed": executed, "measured": []})
         stop_now = None
         if rig:
             # cadence of 2026-10-28: the robot runs the whole block, ONE capture at the scan pose; the controller
@@ -418,6 +444,9 @@ def run_loop(out, sheet, target_path, planner, plant, n=3, max_passes=30, schema
                 log(f"  capture {cap.pass_index} ({'block measurement after %d pass(es)' % executed if final else 'intermediate, record only'}): "
                     f"amp {mt['amp_ratio']:.3f} corr {mt['pattern_corr']:.4f} z {fld.zrange()[0]:.1f}..{fld.zrange()[1]:.1f} mm "
                     f"coverage {fld.meta.get('coverage_observed')}")
+                rec["measured"].append({"capture": cap.pass_index, "block_measurement": final, "source": cap.pass_dir, "field": name + ".npz",
+                                        "z_min": round(float(fld.zrange()[0]), 2), "z_max": round(float(fld.zrange()[1]), 2),
+                                        "coverage": fld.meta.get("coverage_observed"), **mt})
             if not caps:
                 stop_now = f"no capture after round {r}"
             elif executed < k:
@@ -440,6 +469,7 @@ def run_loop(out, sheet, target_path, planner, plant, n=3, max_passes=30, schema
                 stop_now = stop_now or f"robot executed {executed}/{k} pass(es), {len(caps)} capture(s)"
         json.dump({"round": r, "last_field": last_field, "state": state.to_dict(), "plant": plant.state()},
                   open(st_path, "w"), indent=1)
+        _record(out, {**rec, "stop": stop_now})
         if stop_now:
             state.stopped, state.reason = True, stop_now
             break

@@ -132,7 +132,12 @@ the loop prints `reference:` and writes `loops/sheet01/round_00/reference/refere
 the loop prints the plan, writes `round_0N/toolpath.json` + `preview.png`, asks `execute round N? [y/N]`; on `y` his
 driver runs the block (his safety check and preview first, then approach, load, the passes with a scan after each,
 unload) and the loop measures the last scan. (3) It stops by itself and writes `summary.png`.
-`round_0N/robot/robot_run.json` records his run folder (`Scripts/outputs/<timestamp>/`) for every block.
+`round_0N/robot/robot_run.json` records his run folder (`Scripts/outputs/<timestamp>/`) for every block, and the
+whole run folder (run_info.txt, force CSVs, his zigzag preview, point clouds) is copied to `round_0N/robot/run_<timestamp>/`,
+so `loops/<name>/` holds the complete trial. `rounds.jsonl` has one line per round: the measurement before, the
+model's plan, the controller's decision and its reason, the toolpath given, his run folder, every capture measured.
+`python -m ew_loop.trial_report loops/<name>` writes `TRIAL.md` from it (tables + images). On ideas2,
+`python trials/pull_trial.py <name>` fetches the trial into `real_testbed/trials/<name>/` and writes the report.
 Dry run without the robot: `python robot_dobot/run_toolpath_dobot.py check <toolpath.json> --scripts <Scripts> --out <dir>`
 (his safety check and his preview of our path; verified 2026-10-28 on the robot PC).
 The model: `--server http://localhost:8765` is the service on ideas2 through a reverse ssh tunnel opened FROM ideas2

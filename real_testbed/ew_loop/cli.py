@@ -182,7 +182,7 @@ def cmd_rigloop(a):
     new-sheet model): measurement = measure.RigMeasurer, model profile = model_newsheet.NewsheetModel."""
     from . import loop as L, measure as ME, model_newsheet as MN
     profile = MN.NewsheetModel(pairs=a.pairs or MN.DEFAULT_PAIRS, data=a.data or MN.DEFAULT_DATA)
-    sheet = Sheet(width_mm=231.0, length_mm=174.0, thickness_mm=0.6, clamp_mm=a.clamp, margin_side_mm=a.margin_side,
+    sheet = Sheet(width_mm=231.0, length_mm=174.0, thickness_mm=a.thickness, clamp_mm=a.clamp, margin_side_mm=a.margin_side,
                   margin_bottom_mm=0.0, margin_top_mm=a.margin_top, pad_offsets_from_left_mm=(6.5, 224.5), pad_diameter_mm=13.0)
     if a.fixed_plan:
         planner = P.FixedFieldsPlanner(a.fixed_plan, profile)
@@ -284,6 +284,8 @@ def main(argv=None):
     rl.add_argument("--replay-run", help="(replay) recorded run folder with pointcloud_pass0..k")
     rl.add_argument("--calib", help="rig calibration folder (default: the 09-28 deliverable)")
     rl.add_argument("--clamp", type=float, default=12.0, help="robot SHEET_BOTTOM_TO_WHEEL_LINE_MM for this sheet (assumed 12; confirm)")
+    rl.add_argument("--thickness", type=float, default=1.0, help="sheet thickness in mm, for the records (the real sheet: 1.0, user 2026-10-29; "
+                                                                 "the model's prompt keeps the text it was trained with)")
     rl.add_argument("--margin-side", type=float, default=43.4, help="robot MARGIN_SIDE_MM (43.4 = the model's reachable zone, x within +-72.1)")
     rl.add_argument("--pairs"); rl.add_argument("--data")
     rl.add_argument("--n", type=int, default=3, help="most passes per block before re-planning")

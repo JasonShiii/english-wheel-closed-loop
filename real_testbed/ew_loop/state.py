@@ -62,6 +62,7 @@ class LoopState:
         self.increments = {}         # wa_key -> per-pass span increments (mm), in order
         self.exec_passes = 0
         self.stopped, self.reason = False, None
+        self.block_reason = ""       # why block_size chose what it chose (last call), for the trial record
 
     # ---- recording -----------------------------------------------------------------------
     def record_initial(self, metrics):
@@ -112,11 +113,18 @@ class LoopState:
         """passes of the plan's first entry to run before the next re-plan (0 = stop)."""
         m = self.scans[-1]
         if m["amp_ratio"] >= AMP_HI:
+            self.block_reason = f"amp {m['amp_ratio']:.3f} >= {AMP_HI}: nothing more to run"
             return 0
         k = n if m["amp_ratio"] < 0.70 else (2 if m["amp_ratio"] < 0.90 else 1)
-        k = min(k, n, int(first_entry["n"]), self.max_passes - self.exec_passes)
+        why = [f"amp {m['amp_ratio']:.3f} ({'< 0.70' if m['amp_ratio'] < 0.70 else '< 0.90' if m['amp_ratio'] < 0.90 else '>= 0.90'}) -> up to {k} pass(es)"]
+        k2 = min(k, n, int(first_entry["n"]), self.max_passes - self.exec_passes)
+        if k2 < k:
+            why.append(f"capped to {k2} by the plan's hits {int(first_entry['n'])} / passes left {self.max_passes - self.exec_passes}")
+        k = k2
         inc = [d for d in self.increments.get(wa_key(first_entry), [])]
         if not inc or inc[-1] <= 0.5:                 # never measured here (or no growth): probe one pass
+            why.append("area never measured (or last gain <= 0.5 mm): probe 1 pass")
+            self.block_reason = "; ".join(why)
             return min(k, 1)
         r = DECAY_PRIOR
         if len(inc) >= 2 and inc[-2] > 0.5:
@@ -127,10 +135,12 @@ class LoopState:
             step = inc[-1] * r ** (j + 1)
             if pred + step <= room:
                 pred += step; j += 1
-            elif (pred + step - room) < (room - pred):
-                j += 1; break
+            elif (pred + step - room) < (room - pred):   # one more pass lands closer to the target than stopping short
+                pred += step; j += 1; break
             else:
                 break
+        why.append(f"measured gain {inc[-1]:.2f} mm/pass, decay {r:.2f}, room to amp 1.0 = {room:.2f} mm, predicted {pred:.2f} mm -> {j} pass(es)")
+        self.block_reason = "; ".join(why)
         return j
 
     # ---- persistence ----------------------------------------------------------------------
