@@ -571,6 +571,8 @@ def run_loop(out, sheet, target_path, planner, plant, n=3, max_passes=30, schema
         _save_round(out, rd, rec, "executing on the robot")
         caps, executed = plant.execute(doc, rd)
         state.record_executed(first, executed)
+        if hasattr(measurer, "advance"):                  # FakeFieldMeasurer: stand-in fields follow the passes executed
+            measurer.advance(executed)
         rec.update({"robot": getattr(plant, "last_run", None), "executed": executed, "measured": []})
         stop_now = None
         if rig:
@@ -580,6 +582,9 @@ def run_loop(out, sheet, target_path, planner, plant, n=3, max_passes=30, schema
                 fld = measurer.field(cap.pass_dir)
                 name = os.path.join(rd, f"field_{cap.toolpath_id}_capture{cap.pass_index}")
                 _save_field(fld, name, profile)
+                real = measurer.last_real() if hasattr(measurer, "last_real") else None
+                if real is not None:                       # the real scan's field, kept next to the stand-in for the record
+                    _save_field(real, name + "_real", profile)
                 last_field, cur = name + ".npz", fld
                 mt = _compare(fld, target, robust, allow_no_sheet, log)
                 final = i == len(caps) - 1
@@ -589,6 +594,7 @@ def run_loop(out, sheet, target_path, planner, plant, n=3, max_passes=30, schema
                     f"amp {mt['amp_ratio']:.3f} corr {mt['pattern_corr']:.4f} z {fld.zrange()[0]:.1f}..{fld.zrange()[1]:.1f} mm "
                     f"coverage {fld.meta.get('coverage_observed')}")
                 rec["measured"].append({"capture": cap.pass_index, "block_measurement": final, "source": cap.pass_dir, "field": name + ".npz",
+                                        "fed_to_planner": fld.meta.get("source"), "real_error": fld.meta.get("real_error"),
                                         "z_min": round(float(fld.zrange()[0]), 2), "z_max": round(float(fld.zrange()[1]), 2),
                                         "coverage": fld.meta.get("coverage_observed"), **mt})
             if not caps:

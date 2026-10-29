@@ -202,6 +202,9 @@ def cmd_rigloop(a):
     else:
         plant = L.FilePlant(a.exchange, a.captures)
     measurer = ME.RigMeasurer(calib_dir=a.calib)
+    if a.fake_fields:
+        measurer = ME.FakeFieldMeasurer(measurer, a.fake_fields)
+        print(f"FAKE measurement: the planner and the controller see {a.fake_fields}/field_<passes>.npz; the real scans are saved and measured for the record")
     st = L.run_loop(a.out, sheet, a.target, planner, plant, n=a.n, max_passes=a.max_passes, allow_rot90=False,
                     confirm=not a.yes, robust=True, resume=a.resume, measurer=measurer, profile=profile,
                     script=script, allow_no_sheet=a.allow_no_sheet)
@@ -275,10 +278,11 @@ def main(argv=None):
     rl = sub.add_parser("rigloop", help="the automatic loop on the 2026-10-28 rig setup (new-sheet model, scan-pose captures)")
     rl.add_argument("--target", required=True, help="HeightField .npz on the 231x174 grid (figures/rig/targets/)")
     rl.add_argument("--out", required=True)
-    rl.add_argument("--ckpt", help="new-sheet checkpoint (default: free_aug_e8/checkpoint-1832)"); rl.add_argument("--server", help="URL of `serve-fields`")
+    rl.add_argument("--ckpt", help="new-sheet checkpoint (default: free_aug_visfix_e8/checkpoint-1832)"); rl.add_argument("--server", help="URL of `serve-fields`")
     rl.add_argument("--fixed-plan", help="plan JSON instead of a model")
     rl.add_argument("--script", help="JSON list of {wa, passes}: run these blocks as listed, no planner, no controller decisions (dry runs)")
     rl.add_argument("--allow-no-sheet", action="store_true", help="continue when the flat scan holds no sheet (dry runs without a sheet)")
+    rl.add_argument("--fake-fields", help="dry run: folder of field_<c>.npz handed to the planner/controller after c passes, instead of the measured scans")
     rl.add_argument("--plant", choices=["file", "replay", "dobot"], default="file")
     rl.add_argument("--robot-scripts", help="(dobot) Danish's Scripts folder (English-Wheel---DoBot-Files/Scripts)")
     rl.add_argument("--robot-python", help="(dobot) python for his driver (default: this one)")

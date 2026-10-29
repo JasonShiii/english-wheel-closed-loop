@@ -32,30 +32,44 @@ def reference_chain(run, k):
 
 
 def main():
-    m = ME.RigMeasurer()
-    flat = m.reference(RUN)
-    # the bar counts are taken BEFORE the frame flip, in the sheet finder's initial axis, whose sign depends on the BLAS
-    # (y+ on Linux, y- on Windows for the same capture); what matters is that one side clearly holds the bar
-    b = m.info["beyond_edge_points"]
+    # 1. the 10-21 run was a 231 x 124 x 1.0 sheet (handoff section 0): measured with that sheet, the measurer must reproduce
+    #    the recalibrated chain (danish_run2_measure_231x124.Chain, orientation-searching rectangle, hardware mask 37 mm)
+    s124 = F.Sheet(width_mm=231.0, length_mm=124.0, thickness_mm=1.0, clamp_mm=12.0, margin_side_mm=43.4, margin_bottom_mm=0.0)
+    m = ME.RigMeasurer(sheet=s124)
+    m.reference(RUN)
+    b = m.info["beyond_edge_points"]          # counted BEFORE the frame flip: the side depends on the BLAS, one side must dominate
     assert m.info["inside_fraction"] > 0.7 and max(b.values()) > 5 * min(b.values()), m.info
-    assert flat.z_mm.shape == (88, 117) and abs(flat.x_mm[-1] - 115.5) < 1e-6
-    tgt = F.HeightField.load(os.path.join(RT, "figures", "rig", "targets", "S1_t042_c4.npz"))
-    assert tgt.z_mm.shape == flat.z_mm.shape and np.allclose(tgt.x_mm, flat.x_mm) and np.allclose(tgt.y_mm, flat.y_mm), "target and measurement grids differ"
-    print(f"[ok] reference on the 10-21 flat scan: {m.info['inside_fraction']} inside, camera offsets {m.info['camera_flat_offset_mm']}, "
-          f"flat z {flat.zrange()[0]:.2f}..{flat.zrange()[1]:.2f} mm, coverage {flat.meta['coverage_observed']}; grid == target grid")
+    ch = ME.D124.Chain(231.0, 124.0, band=45.0, hw_mm=37.0, tag="231x124_rig")
+    P0, I0, Fr, corr, info = ch.prepare(RUN)
+    xy0, h0, m0 = ch.field_points(P0, I0, Fr, corr); Z0 = ch.grid(xy0[m0], h0[m0])
+    sheet = np.isfinite(Z0) & (np.abs(Z0) < ME.D124.FLAT_TOL); GX, GY = np.meshgrid(ch.XS, ch.YS)
+    sheet &= ~((np.abs(GX) > 231.0 / 2 - 14) & (GY < -124.0 / 2 + 37.0))
+    # the frame must be IDENTICAL (same chain); the grids differ by up to 1 mm in x (ours = the targets' nodes spread over the
+    # exact width, the chain's = 2 mm steps from the left edge), so masks and fields are compared within tolerance
+    for k in ("c", "ex", "ey", "n"):
+        assert np.allclose(m.frame[k], Fr[k]), f"frame {k} differs from the recalibrated chain"
+    agree = (sheet == m.sheet_mask).mean()
+    print(f"[ok] frame == danish_run2_measure_231x124 (rectangle angle vs min-area rect {m.info['rect_angle_vs_minarearect_deg']} deg, "
+          f"offset {m.info['rect_offset_mm']}); sheet masks agree on {agree:.3f} of the cells")
+    assert agree > 0.97
     for k in (3, 6):
-        a = m.field(ME.pass_dir(RUN, k)); b = reference_chain(RUN, k)
-        # same chain, nodes 0-1 mm apart (arange vs linspace): compare robust spans and the correlation on common cells
-        sa, sb = np.nanpercentile(a.z_mm, [0.5, 99.5]), np.nanpercentile(b.z_mm, [0.5, 99.5])
-        mm = np.isfinite(a.z_mm) & np.isfinite(b.z_mm)
-        r = np.corrcoef(a.z_mm[mm], b.z_mm[mm])[0, 1]
-        print(f"[ok] pass {k}: span {np.ptp(sa):.2f} vs {np.ptp(sb):.2f} mm (danish_run2_measure), corr {r:.4f}, coverage {a.meta['coverage_observed']}")
-        assert abs(np.ptp(sa) - np.ptp(sb)) < 1.0 and r > 0.97, (sa, sb, r)
+        Zc, _ = ch.despeckle(np.where(sheet, ch.grid(*(lambda xy, h, mm: (xy[mm], h[mm]))(*ch.field_points(*ch.load(RUN, k), Fr, corr))), np.nan))
+        Zm, _ = m.masked(m.raw_grid(ME.pass_dir(RUN, k))[0])
+        sc, sm = np.ptp(np.nanpercentile(Zc, [0.5, 99.5])), np.ptp(np.nanpercentile(Zm, [0.5, 99.5]))
+        mm = np.isfinite(Zc) & np.isfinite(Zm); r = np.corrcoef(Zc[mm], Zm[mm])[0, 1]
+        print(f"[ok] 10-21 pass {k} on the 231 x 124 sheet: span {sm:.2f} vs {sc:.2f} mm (recalibrated chain), corr {r:.4f}, "
+              f"coverage {np.isfinite(Zm).mean():.3f} vs {np.isfinite(Zc).mean():.3f}")
+        assert abs(sc - sm) < 1.0 and r > 0.99, (sc, sm, r)          # same tolerance as the 174 port of 10-28
     with tempfile.TemporaryDirectory() as d:
-        m.save(d); m2 = ME.RigMeasurer().load(d)
-        c, c0 = m2.field(ME.pass_dir(RUN, 3)), m.field(ME.pass_dir(RUN, 3))
-        assert np.allclose(np.nan_to_num(c.z_mm), np.nan_to_num(c0.z_mm))
+        m.save(d); m2 = ME.RigMeasurer(sheet=s124).load(d)
+        assert np.array_equal(m2.sheet_mask, m.sheet_mask) and np.allclose(m2.frame["c"], m.frame["c"])
         print("[ok] reference save/load")
+    # 2. the real sheets from 2026-10-29: 231 x 174, same grid as the targets
+    m174 = ME.RigMeasurer()
+    tgt = F.HeightField.load(os.path.join(RT, "figures", "rig", "targets", "S1_t042_c4.npz"))
+    assert tgt.z_mm.shape == (len(m174.yg), len(m174.xg)) and np.allclose(tgt.x_mm, m174.xg) and np.allclose(tgt.y_mm, m174.yg), "target and measurement grids differ"
+    print(f"[ok] 231 x 174 measurer grid == target grid {tgt.z_mm.shape}, hardware mask {m174.hw_mm} mm above the gripped edge")
+    flat = tgt
 
     prof = MN.NewsheetModel()
     hist = [dict(cx=3.0, cy=15.1, wx=99.5, wy=105.6, rot=0, N=15, n=2), dict(cx=3.0, cy=15.1, wx=99.5, wy=105.6, rot=0, N=15, n=1)]

@@ -1,0 +1,16 @@
+{
+ "source": "../experiments/newsheet_pipeline/data_231x174_free_g9e-4/S1/t042",
+ "recipe": [
+  {
+   "wx": 99.5,
+   "wy": 105.6,
+   "rot": 0,
+   "cx": 3.0,
+   "cy": 15.1,
+   "N": 15,
+   "n": 6
+  }
+ ],
+ "rule": "field_<c>.npz = the simulated sheet after c passes of the recipe; the target S1_t042_c4 is cycle 4",
+ "noise": "iid normal sigma 1.0 mm added to every field (seed 20261029)"
+}

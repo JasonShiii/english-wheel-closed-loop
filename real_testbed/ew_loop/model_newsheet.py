@@ -34,7 +34,8 @@ def planners():
 NEWSHEET = os.path.join(ROOT, "experiments", "newsheet_pipeline")
 DEFAULT_PAIRS = os.path.join(NEWSHEET, "pairs_231x174_free_clean")
 DEFAULT_DATA = os.path.join(NEWSHEET, "data_231x174_free_g9e-4")
-DEFAULT_CKPT = os.path.join(NEWSHEET, "runs", "free_aug_e8", "checkpoint-1832")
+DEFAULT_CKPT = os.path.join(NEWSHEET, "runs", "free_aug_visfix_e8", "checkpoint-1832")   # handoff 2026-10-29 14:45: vision LoRA
+# trained (scan-like flat inputs 10/24 in band vs 6/24 for free_aug_e8); same prompt / schema. Never the clean checkpoint on real scans.
 SCHEMA = "v5facts"
 
 

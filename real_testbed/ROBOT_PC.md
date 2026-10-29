@@ -132,9 +132,12 @@ the loop prints `reference:` and writes `loops/sheet01/round_00/reference/refere
 the loop prints the plan, writes `round_0N/toolpath.json` + `preview.png`, asks `execute round N? [y/N]`; on `y` his
 driver runs the block (his safety check and preview first, then approach, load, the passes with a scan after each,
 unload) and the loop measures the last scan. (3) It stops by itself and writes `summary.png`.
-A block (2026-10-29): the wheel is loaded once, the block's passes run back to back (each pass starts where the
-last ended, in the opposite direction; checked on his own motion plans before any motion, else his unload ->
-reposition -> reload between passes), the wheel is unloaded, ONE scan at the scan pose. Directions alternate over
+The wheel rule (user, 2026-10-29), per transition between two consecutive passes: the same zigzag again (reversed,
+starting where the last ended) -> the wheel stays loaded and the pass starts from the end point; a different zigzag
+or ends that do not coincide -> unload, reposition, reload; to the scan pose -> always unload. A block is one zigzag
+(the plan's first entry) x the controller's passes, so its passes run back to back (checked on his own motion plans
+before any motion), then unload and ONE scan. Speeds: Danish's current settings (ACCELERATION / VELOCITY 20 %, leg
+multipliers 1.0; user, 2026-10-29), written into every run_info.txt. Directions alternate over
 the whole session (the next block starts opposite to the last pass). Records are written as they happen:
 `round_0N/round.json` + `toolpath.json` + `preview.png` + `replan.png` before the robot moves (status planned /
 executing / done), his run folder mirrored into `round_0N/robot/run_<timestamp>/` while his driver runs (every

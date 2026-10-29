@@ -15,6 +15,12 @@ correction from the flat scan apply to every later capture; no robot pose is nee
 records the TCP pose per scan, it is only a check.
 
 The grid is frames.grid_for(cfg.SHEET, STEP): the same nodes the targets (pairs.field_of) are on.
+
+2026-10-29 (handoff section 0, dose_fit/RECALIBRATION_231x124_1mm_2026-10-29.md): the chain is now
+bridge_checks/danish_run2_measure_231x124.Chain with the sheet size as a parameter. The rectangle fit searches
+ORIENTATION and position (Chain.fit_rect_rot, FFT occupancy correlation) instead of plate_refill's min-area-rect
+orientation, which was 7-22 deg off on the 10-21/22 scans; the hardware mask covers |x| > W/2 - 14 up to 37 mm above
+the gripped edge (the old -15 mm was 35-37 mm above the real gripped edge of those runs).
 """
 import json
 import os
@@ -28,7 +34,8 @@ RT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))                
 for _p in (os.path.join(RT, "bridge_checks"), os.path.join(os.path.dirname(RT), "experiments", "newsheet_pipeline")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
-import danish_run2_measure as DM          # noqa: E402  sheet finder, frame, camera correction, despeckle
+import danish_run2_measure as DM          # noqa: E402  GATE, FLAT_TOL (the constants are the same in both chains)
+import danish_run2_measure_231x124 as D124  # noqa: E402  the chain with the sheet size as a parameter, fit_rect_rot
 import cfg                                # noqa: E402  the sheet, crop line, reachable zone of the trained model
 import pairs as NP                        # noqa: E402  mask_crop, plane_removed
 from . import scan_to_field as S          # noqa: E402  merge_capture
@@ -40,11 +47,14 @@ def pass_dir(run, k):
     return os.path.join(run, PASS_DIR.format(k=k))
 
 
+HW_MM = 37.0        # hardware mask height above the gripped edge (recalibration 2026-10-29)
+
+
 def load_capture(pdir, calib_dir):
     """merged points (device-1 frame, mm) and camera ids of one capture folder, gated to the rig volume"""
     xyz, ids = S.merge_capture(pdir, calib_dir, window=(1.0, 1e6), cameras=(1, 2, 3), with_ids=True)
     xyz = xyz.astype(np.float32)
-    g = np.all((xyz > DM.GATE[:, 0]) & (xyz < DM.GATE[:, 1]), axis=1)
+    g = np.all((xyz > D124.GATE[:, 0]) & (xyz < D124.GATE[:, 1]), axis=1)
     return xyz[g], ids[g]
 
 
@@ -75,41 +85,115 @@ def grid_nodes(xy, h, xg, yg, min_pts=3, fallback_cells=3):
     return Z
 
 
+class FakeFieldMeasurer:
+    """dry runs without a sheet (2026-10-29): the robot runs and scans for real and every real capture is measured and
+    saved for the record (field_*_real.npz/png; failures tolerated), but the field handed to the controller and the
+    planner is a stand-in: <fields_dir>/field_<c>.npz after c passes executed in total (the largest c available), e.g.
+    the simulated trajectory behind the target. advance(executed) is called by run_loop after every block."""
+    def __init__(self, real, fields_dir):
+        import glob as _g
+        self.real, self.dir = real, os.path.abspath(fields_dir)
+        self.avail = sorted(int(os.path.basename(p)[6:-4]) for p in _g.glob(os.path.join(self.dir, "field_*.npz")))
+        if not self.avail:
+            raise FileNotFoundError(f"no field_<c>.npz in {fields_dir}")
+        self.xg, self.yg, self.cum, self.info = real.xg, real.yg, 0, {}
+
+    def _fake(self, extra):
+        c = max([a for a in self.avail if a <= self.cum] or [self.avail[0]])
+        fld = F.HeightField.load(os.path.join(self.dir, f"field_{c}.npz"))
+        fld.meta.update({"source": f"FAKE: {self.dir}/field_{c}.npz (after {self.cum} pass(es) in total)", "fake_cycle": c,
+                         "coverage_observed": fld.meta.get("coverage_observed", round(float(np.isfinite(fld.z_mm[fld.y_mm >= cfg.crop_y()]).mean()), 3)), **extra})
+        return fld
+
+    def _real(self, fn, *a):
+        try:
+            fld = fn(*a); return fld, None
+        except Exception as e:                            # no sheet in the scan: record the failure, keep going
+            return None, f"{type(e).__name__}: {e}"
+
+    def advance(self, executed):
+        self.cum += int(executed)
+
+    def reference(self, run):
+        fld, err = self._real(self.real.reference, run)
+        self.info = {**(self.real.info or {}), "fake_fields": self.dir, "real_reference_error": err}
+        self._last_real = fld
+        return self._fake({"real_capture": os.path.abspath(os.path.join(run, "pointcloud_pass0")), "real_error": err})
+
+    def field(self, pdir):
+        fld, err = self._real(self.real.field, pdir) if self.real.frame is not None else (None, "no real reference")
+        self._last_real = fld
+        return self._fake({"real_capture": os.path.abspath(pdir), "real_error": err})
+
+    def last_real(self):
+        return getattr(self, "_last_real", None)
+
+    def save(self, d):
+        os.makedirs(d, exist_ok=True)
+        if self.real.frame is not None:
+            self.real.save(d)
+        json.dump({"fake_fields": self.dir, "cum": self.cum, "info": self.info}, open(os.path.join(d, "fake.json"), "w"), indent=1, default=str)
+
+    def load(self, d):
+        if os.path.exists(os.path.join(d, "reference.npz")):
+            self.real.load(d)
+        m = json.load(open(os.path.join(d, "fake.json"))); self.cum = m.get("cum", 0)
+        return self
+
+    def preview(self, path, fld=None):
+        if self.real.frame is not None:
+            self.real.preview(path, self.last_real())
+
+
 class RigMeasurer:
     """reference(run) once on the flat scan (pointcloud_pass0), then field(pass_dir) for every capture."""
 
-    def __init__(self, calib_dir=None, step=cfg.STEP_MM):
-        self.sheet = cfg.SHEET
-        self.calib = calib_dir or DM.CALIB
-        DM.CALIB = self.calib
+    def __init__(self, calib_dir=None, step=cfg.STEP_MM, sheet=None, hw_mm=HW_MM, legacy_fit=False):
+        self.sheet = sheet or cfg.SHEET
+        self.calib = calib_dir or D124.CALIB
+        D124.CALIB = DM.CALIB = self.calib
+        self.hw_mm = float(hw_mm)
+        self.chain = D124.Chain(self.sheet.width_mm, self.sheet.length_mm, band=DM.BAND, hw_mm=self.hw_mm,
+                                tag=f"{self.sheet.width_mm:g}x{self.sheet.length_mm:g}_rig", legacy_fit=legacy_fit)
         self.xg, self.yg = F.grid_for(self.sheet, step)
         self.frame = self.corr = self.sheet_mask = self.info = None
 
     # ---- the flat scan ------------------------------------------------------------------
     def reference(self, run):
         """run must contain pointcloud_pass0 (the flat gripped sheet at the scan pose)."""
-        P0, I0, Fr, corr, info = DM.prepare(run)
-        xy0, h0, m0 = DM.field_points(P0, I0, Fr, corr)
+        D124.CALIB = self.calib
+        P0, I0, Fr, corr, info = self.chain.prepare(run)
+        xy0, h0, m0 = self.chain.field_points(P0, I0, Fr, corr)
         Z0 = grid_nodes(xy0[m0], h0[m0], self.xg, self.yg)
         W, L = self.sheet.width_mm, self.sheet.length_mm
         GX, GY = np.meshgrid(self.xg, self.yg)
-        sheet = np.isfinite(Z0) & (np.abs(Z0) < DM.FLAT_TOL)
-        sheet &= ~((np.abs(GX) > W / 2 - 14) & (GY < -15))          # clamp hardware along the gripped corners
+        sheet = np.isfinite(Z0) & (np.abs(Z0) < D124.FLAT_TOL)
+        sheet &= ~((np.abs(GX) > W / 2 - 14) & (GY < -L / 2 + self.hw_mm))   # clamp hardware along the gripped corners
         self.frame, self.corr, self.sheet_mask = Fr, corr, sheet
-        self.info = {**info, "flat_cells": int(sheet.sum()), "flat_z_p0p5_p99p5": [round(float(np.nanpercentile(Z0[sheet], q)), 2) for q in (0.5, 99.5)]}
+        info = {k: v for k, v in info.items() if k != "rect_score_curve"}
+        self.info = {**info, "hw_mm": self.hw_mm, "flat_cells": int(sheet.sum()),
+                     "flat_z_p0p5_p99p5": [round(float(np.nanpercentile(Z0[sheet], q)), 2) for q in (0.5, 99.5)] if sheet.any() else None}
         return self._finish(Z0, {"source": "flat reference", "run": os.path.abspath(run)})
 
     def field(self, pdir):
         """one capture folder (device_<1|2|3>_pointcloud_*.ply) -> HeightField, cropped, plane removed"""
         if self.frame is None:
             raise RuntimeError("call reference(run) on the flat scan first")
+        Z, nb = self.raw_grid(pdir)
+        return self._finish(Z, {"source": os.path.abspath(pdir), "band_points": nb})
+
+    def raw_grid(self, pdir):
+        """heights above the flat sheet on the grid, before mask / despeckle / crop / plane removal"""
         P, I = load_capture(pdir, self.calib)
-        xy, h, m = DM.field_points(P, I, self.frame, self.corr)
-        Z = grid_nodes(xy[m], h[m], self.xg, self.yg)
-        return self._finish(Z, {"source": os.path.abspath(pdir), "band_points": int(m.sum())})
+        xy, h, m = self.chain.field_points(P, I, self.frame, self.corr)
+        return grid_nodes(xy[m], h[m], self.xg, self.yg), int(m.sum())
+
+    def masked(self, Z):
+        """the chain's own end product: sheet mask from the flat scan, despeckled (what danish_run2_measure_231x124 stores)"""
+        return D124.Chain.despeckle(np.where(self.sheet_mask, Z, np.nan))
 
     def _finish(self, Z, meta):
-        Z, nbad = DM.despeckle(np.where(self.sheet_mask, Z, np.nan))
+        Z, nbad = self.masked(Z)
         fld = F.HeightField(self.xg.astype(float), self.yg.astype(float), Z.astype(np.float32),
                             {**meta, "despeckled_cells": int(nbad), "calib": self.calib,
                              "coverage_sheet": round(float(np.isfinite(Z).mean()), 3)})
@@ -130,7 +214,7 @@ class RigMeasurer:
         self.sheet_mask = z["sheet_mask"]
         self.corr = {int(c): v for c, v in zip(z["corr_cams"], z["corr_vals"])}
         m = json.load(open(os.path.join(d, "reference.json"))); self.info, self.calib = m["info"], m["calib"]
-        DM.CALIB = self.calib
+        D124.CALIB = DM.CALIB = self.calib
         return self
 
     def preview(self, path, fld=None):

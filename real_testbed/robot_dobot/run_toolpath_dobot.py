@@ -12,11 +12,14 @@ Before his driver runs, in memory only (zigzag_forming_oldclamps = zf):
                              (his per-pivot safety check then runs on OUR sheet and zone)
   zf.ZIGZAG_*             <- the file's robot block (run_info.txt stays truthful); zf.NUM_PASSES <- the toolpath's passes
   zf._capture_pointcloud_snapshot("pointcloud_pass0") skipped in `run` (the loop measured that state already)
-  one block = one scan (2026-10-29): between the passes of a block his driver's move to the scan pose and the scan are
-                             skipped; where the last pass ends on the next pass's start (same zigzag, reversed -- checked on
-                             his own motion plans before any motion) the unload, the reposition and the reload are skipped
-                             too: the wheel stays loaded and the next pass starts from the end point. Otherwise his normal
-                             unload -> reposition -> reload runs. The scan after the LAST pass is the block's measurement.
+  the wheel rule (user, 2026-10-29), decided per TRANSITION between two consecutive passes:
+                             - the next pass is the SAME zigzag (reversed) and starts where the last ended: the wheel stays
+                               loaded, no unload / reposition / reload, the next pass starts from the end point;
+                             - a DIFFERENT zigzag next, or ends that do not coincide: unload -> reposition -> reload (his flow);
+                             - going to the scan pose: always unload. One scan per block, after its last pass.
+                             The loop sends one zigzag per block (the plan's first entry x the controller's passes), so inside
+                             a block every transition is the first case (checked on his own motion plans before any motion);
+                             between blocks there is always the scan.
   zf.run_zigzag_forming   -> no-op in `baseline` (his run_step_7_5 then only scans and parks at pos_9)
   zf._prompt_pass_radii   -> kept (the operator enters Rx/Rz between passes as today) unless --auto-radii
   os.startfile            -> no image viewer unless --show-preview; wheel_force.plot_last_wheel_force_path -> non-blocking
@@ -82,6 +85,11 @@ def run_info_extra(sheet, tp=None, toolpath=None):
         e.update({"Toolpath": toolpath, "Toolpath ID": tp["id"], "Zigzag Centre X (mm, planner frame)": rb.get("center_x_mm"),
                   "Zigzag Start Y (mm)": rb.get("start_mm"), "Pivots (planner frame, mm)": json.dumps(tp["pivots_xy_mm"])})
     return e
+
+
+def speed_info(zf):
+    keys = ("ACCELERATION", "VELOCITY", "LEG_V_MULTIPLIER", "LEG_A_MULTIPLIER", "LEG_V", "LEG_A", "PIVOT_V", "PIVOT_A")
+    return {"Speeds (% of CR5A max)": ", ".join(f"{k} {getattr(zf, k)}" for k in keys if hasattr(zf, k))}
 
 
 def patch_run_info(extra):
@@ -263,7 +271,7 @@ def main():
             zf.X_DIM_MM, zf.Y_DIM_MM = float(sh["width_mm"]), float(sh["length_mm"])
             zf.SHEET_BOTTOM_TO_WHEEL_LINE_MM = float(sh["clamp_mm"]); zf.Y_DIM_EFFECTIVE_MM = zf.Y_DIM_MM - zf.SHEET_BOTTOM_TO_WHEEL_LINE_MM
             extra.update(run_info_extra(sh))
-        patch_run_info(extra)
+        patch_run_info({**extra, **speed_info(zf)})
     else:
         doc, tp = load_toolpath(a.toolpath)
         piv = configure(zf, zp, doc, tp, a.mode, a.margin_top, a.auto_radii, a.start_direction)
@@ -272,7 +280,7 @@ def main():
         for _ in range(int(tp["passes"]) if a.mode == "run" else 0):
             dirs.append(d); d = "r2l" if d == "l2r" else "l2r"
         res["pass_directions"] = dirs
-        patch_run_info({"Loop Mode": f"run: {tp['passes']} pass(es) of the toolpath below",
+        patch_run_info({**speed_info(zf), "Loop Mode": f"run: {tp['passes']} pass(es) of the toolpath below",
                         "Pass Directions": ", ".join(f"{i + 1}: {'left -> right' if x == 'l2r' else 'right -> left'}" for i, x in enumerate(dirs)) or "none",
                         **run_info_extra(doc["sheet"], tp, os.path.abspath(a.toolpath))})
         if a.start_direction == "r2l":
