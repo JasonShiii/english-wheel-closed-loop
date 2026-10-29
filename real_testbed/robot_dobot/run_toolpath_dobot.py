@@ -145,15 +145,18 @@ def main():
 
     if a.mode == "baseline":
         doc = tp = None; piv = []
+        zf.NUM_PASSES = 0                                               # his run_info.txt then says 0 passes
+        extra = {"Loop Mode": "baseline: flat scan only, no forming"}
         if a.sheet_json:
             sh = json.load(open(a.sheet_json))
             zf.X_DIM_MM, zf.Y_DIM_MM = float(sh["width_mm"]), float(sh["length_mm"])
             zf.SHEET_BOTTOM_TO_WHEEL_LINE_MM = float(sh["clamp_mm"]); zf.Y_DIM_EFFECTIVE_MM = zf.Y_DIM_MM - zf.SHEET_BOTTOM_TO_WHEEL_LINE_MM
-            patch_run_info(run_info_extra(sh))
+            extra.update(run_info_extra(sh))
+        patch_run_info(extra)
     else:
         doc, tp = load_toolpath(a.toolpath)
         piv = configure(zf, zp, doc, tp, a.mode, a.margin_top, a.auto_radii)
-        patch_run_info(run_info_extra(doc["sheet"], tp, os.path.abspath(a.toolpath)))
+        patch_run_info({"Loop Mode": f"run: {tp['passes']} pass(es) of the toolpath below", **run_info_extra(doc["sheet"], tp, os.path.abspath(a.toolpath))})
         bounds, oob = safety(zf, piv)
         res["constants"] = {k: getattr(zf, k) for k in ("X_DIM_MM", "Y_DIM_MM", "SHEET_BOTTOM_TO_WHEEL_LINE_MM", "MARGIN_SIDE_MM",
                                                        "MARGIN_BOTTOM_MM", "MARGIN_TOP_MM", "ZIGZAG_LV_MM", "ZIGZAG_ALPHA_DEG",
