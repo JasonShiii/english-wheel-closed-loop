@@ -123,7 +123,11 @@ def turnaround_coincides(zf, piv, tol_mm=0.5, tol_deg=0.5):
     return ok, {"end1_to_start2_mm_deg": [round(d1[0], 3), round(d1[1], 3)], "end2_to_start1_mm_deg": [round(d2[0], 3), round(d2[1], 3)]}
 
 
-def continuous_block(zf, n_passes, coincide, log=print):
+UNLOAD_MAX_N = 30.0     # after an unload the wheel force must be below this, else stop (2026-10-29 incident: the motor stalled
+                        # while opening, the force stayed at 236 N and his driver moved the robot on with the wheels clamped)
+
+
+def continuous_block(zf, n_passes, coincide, log=print, wf=None):
     """wrap his pass loop so that a block of n_passes is: load once, the passes back to back (or with his normal
     unload/reposition/reload where the ends do not coincide), unload, scan once. Returns the bookkeeping dict."""
     st = {"done": 0, "between": False, "expect_start": False, "last_pose": None, "skipped": [], "n": n_passes, "coincide": coincide}
@@ -146,7 +150,19 @@ def continuous_block(zf, n_passes, coincide, log=print):
         if st["between"] and coincide:
             st["skipped"].append(f"unload after pass {st['done']}"); log(f"[continuous] pass {st['done']} ends where pass {st['done'] + 1} starts: wheel stays loaded")
             return None
-        return o_unload(pulse_count)
+        r = o_unload(pulse_count)
+        if wf is not None and hasattr(wf, "_read_wheel_force_n"):           # verify the wheel really opened before anything moves
+            import time as _t
+            _t.sleep(0.5)
+            f = max(float(wf._read_wheel_force_n()) for _ in range(3))
+            st.setdefault("force_after_unload_N", []).append(round(f, 1))
+            if f > UNLOAD_MAX_N:
+                st["wheel_stuck_N"] = round(f, 1)
+                log(f"\n[run_toolpath_dobot] !!! WHEEL DID NOT OPEN: {f:.0f} N after reversing {pulse_count} pulses (limit {UNLOAD_MAX_N:.0f} N). "
+                    "Stopping here, the robot will NOT move. Release the wheel by hand / with the operator's tools.")
+                raise RuntimeError(f"wheel did not open: {f:.0f} N after the unload")
+            log(f"[run_toolpath_dobot] wheel force after the unload: {f:.1f} N (ok)")
+        return r
 
     def _movel(pose, *a, **k):
         if st["between"] and list(pose) == pc_pose:
@@ -323,7 +339,7 @@ def main():
             coincide, gaps = False, {}
         else:
             coincide, gaps = turnaround_coincides(zf, piv)
-        block = continuous_block(zf, zf.NUM_PASSES, coincide)
+        block = continuous_block(zf, zf.NUM_PASSES, coincide, wf=wf)
         res["continuous"] = {"coincide": coincide, **gaps}
         print(f"[run_toolpath_dobot] block: {zf.NUM_PASSES} pass(es), "
               + ("back to back, wheel loaded throughout" if coincide else "his unload/reposition/reload between passes")
@@ -344,7 +360,10 @@ def main():
     if err is None and missing:                      # his driver catches its own errors and prints them: report the symptom
         err = f"driver finished without capture(s) pointcloud_pass{','.join(missing)} (see its output above; robot alarm / control mode / camera)"
     done = block["done"] if block is not None else 0
-    res.update({"output_dir": run_dir, "captures": caps, "passes_done": done, "skipped_between_passes": block["skipped"] if block else [],
+    if block is not None and block.get("wheel_stuck_N") is not None:
+        err = f"wheel did not open after the unload: {block['wheel_stuck_N']} N (robot stopped where it was; release the wheel before anything else)"
+    res.update({"force_after_unload_N": block.get("force_after_unload_N") if block else None,
+                "output_dir": run_dir, "captures": caps, "passes_done": done, "skipped_between_passes": block["skipped"] if block else [],
                 "ok": not missing and err is None, "error": err, "secs": round(time.time() - t0)})
     json.dump(res, open(os.path.join(out, "robot_run.json"), "w"), indent=1)
     print(f"[run_toolpath_dobot] done: ok={res['ok']} error={err} run folder {run_dir} captures {sorted(caps)}", flush=True)

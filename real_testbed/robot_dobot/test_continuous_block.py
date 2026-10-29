@@ -101,6 +101,23 @@ def main():
     assert ev.count("LOAD") == 3 and sum(1 for e in ev if isinstance(e, str) and e.startswith("UNLOAD")) == 3, s
     assert [e for e in ev if isinstance(e, str) and e.startswith("SCAN")] == ["SCAN pointcloud_pass3"], s
     print("[ok] fallback: his unload / reposition / reload between passes, still one scan per block")
+    # a wheel that does not open (the 2026-10-29 incident): the block must stop right after the unload, before any move
+    zf, zp, rtd = load(a.scripts); ev = []
+    d = tempfile.mkdtemp(); open(os.path.join(d, "run_info.txt"), "w").write("x\n"); zf._output_dir = d
+    zf.close_wheel_until_force = lambda retare=True: (ev.append("LOAD"), 1067)[1]
+    zf.open_wheel_by_last_close_count = lambda pulse_count=None: ev.append(f"UNLOAD {pulse_count}")
+    zf.capture_pointcloud = lambda path: ev.append("SCAN"); zf._rtde = lambda *a: [0.0] * 6; zf.unload_wheel_if_loaded = None
+    zf._movel_single = lambda pose, *x, **k: ev.append("MOVE"); zf._arc_single = lambda *x, **k: ev.append("MOVE"); zf._wait_stopped = lambda *x, **k: None
+    doc = json.load(open(tpath)); tp = doc["toolpaths"][0]
+    piv = rtd.configure(zf, zp, doc, tp, "run", 12.0, True, "l2r"); rtd.quiet(zf, None, "run")
+    stuck = types.SimpleNamespace(_read_wheel_force_n=lambda: 236.0)
+    st = rtd.continuous_block(zf, zf.NUM_PASSES, True, log=lambda *x: None, wf=stuck)
+    try:
+        zf.run_zigzag_forming(); raise AssertionError("a stuck wheel did not stop the block")
+    except RuntimeError as e:
+        last_unload = max(i for i, e2 in enumerate(ev) if str(e2).startswith("UNLOAD"))
+        assert "MOVE" not in ev[last_unload:] and "SCAN" not in ev, ev[last_unload:]
+        print(f"[ok] stuck wheel ({st['wheel_stuck_N']} N after the unload): stopped before any move or scan ({e})")
     print("ALL CONTINUOUS-BLOCK CHECKS PASSED")
 
 
