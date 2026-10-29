@@ -129,7 +129,7 @@ def main():
                             "pad_min_lateral_when_at_wheel_line_mm": None if pad_lat == 1e9 else round(pad_lat, 1),
                             "gripped_edge_clearance_in_wheel_lane_mm": None if edge_hit == 1e9 else round(edge_hit, 1)})
                 rows.append(row)
-                print(f"theta {th:+4d} ({cx:+4d},{cy:+4d}): zone {'ok ' if not oob else 'OUT'} IK {'ok ' if row['ik_ok'] else 'FAIL'} "
+                print(f"theta {th:+4.0f} ({cx:+6.1f},{cy:+6.1f}): zone {'ok ' if not oob else 'OUT'} IK {'ok ' if row['ik_ok'] else 'FAIL'} "
                       f"step {max(row['max_joint_step_deg']):6.1f} deg  pad past line {row['pad_max_past_wheel_line_mm']:7.1f}  "
                       f"edge clearance {row['gripped_edge_clearance_in_wheel_lane_mm']}", flush=True)
     res = {"generated": time.strftime("%Y-%m-%d %H:%M:%S"), "secs": round(time.time() - t0), "area": "50 x 50 mm, N 12 (our geometry, rot 0, then rotated)",
