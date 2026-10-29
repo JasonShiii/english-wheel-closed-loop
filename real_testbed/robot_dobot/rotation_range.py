@@ -58,6 +58,8 @@ def wheel_frame(points_planner, contact, heading):
 
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument("--scripts", required=True); ap.add_argument("--out", required=True)
+    ap.add_argument("--cases", help="JSON list of [theta, cx, cy] instead of the default grid")
+    ap.add_argument("--name", default="rotation_range.json")
     a = ap.parse_args(); os.makedirs(a.out, exist_ok=True)
     sys.modules.setdefault("dobot_sdk", type(sys)("dobot_sdk")); sys.modules["dobot_sdk"].DobotRobot = object; sys.modules["dobot_sdk"].CoordinateType = object
     sys.path.insert(0, a.scripts)
@@ -74,9 +76,10 @@ def main():
     edge_sheet = np.stack([np.linspace(-W / 2, W / 2, 47), np.full(47, -L / 2)], axis=1)
     pads_p, edge_p = SHEET.to_planner(pads_sheet), SHEET.to_planner(edge_sheet)
     rows, t0 = [], time.time()
-    for th in THETAS:
-        for cy in YS:
-            for cx in XS:
+    cases = json.load(open(a.cases)) if a.cases else [(th, cx, cy) for th in THETAS for cy in YS for cx in XS]
+    for th, cx, cy in cases:
+        if True:
+            if True:
                 piv_s = pivots_sheet(cx, cy, th); piv_p = SHEET.to_planner(piv_s)
                 oob = [list(map(float, p)) for p in piv_p if not zf.point_in_safe_zone(tuple(p), *args)]
                 row = {"theta": th, "cx": cx, "cy": cy, "safe_zone_ok": not oob, "n_out_of_zone": len(oob),
@@ -93,12 +96,18 @@ def main():
                         heads.append(h); contacts.append(order[i]); heads.append(h); contacts.append(order[i + 1])
                 row["leg_headings_deg"] = [round(math.degrees(min(heads)), 1), round(math.degrees(max(heads)), 1)]
                 # IK along the sequence (pos_9 -> pass 1 -> pass 2)
-                prev, jumps, codes, J = q_pos9, np.zeros(6), [], []
+                prev, jumps, codes, J, approach = q_pos9, np.zeros(6), [], [], None
                 for p in poses:
                     code, q = ik.q(zf._dobot_pose_str(p)); codes.append(code)
                     if q is None:
                         continue
-                    J.append(q); jumps = np.maximum(jumps, np.abs(np.array(q) - np.array(prev))); prev = q
+                    step = np.abs(np.array(q) - np.array(prev))
+                    if approach is None:
+                        approach = step                                # pos_9 -> the first pose (the slow approach move)
+                    else:
+                        jumps = np.maximum(jumps, step)                # inside the passes
+                    J.append(q); prev = q
+                row["approach_joint_step_deg"] = None if approach is None else [round(float(v), 1) for v in approach]
                 J = np.array(J) if J else np.zeros((0, 6))
                 row.update({"ik_ok": all(c == 0 for c in codes), "ik_fail": int(sum(c != 0 for c in codes)), "n_poses": len(poses),
                             "ik_codes": sorted(set(codes)),
@@ -125,8 +134,8 @@ def main():
                       f"edge clearance {row['gripped_edge_clearance_in_wheel_lane_mm']}", flush=True)
     res = {"generated": time.strftime("%Y-%m-%d %H:%M:%S"), "secs": round(time.time() - t0), "area": "50 x 50 mm, N 12 (our geometry, rot 0, then rotated)",
            "sheet": SHEET.to_dict(), "safe_zone_planner": zf.safe_zone_bounds(*args), "q_pos9": q_pos9, "q_scan": q_scan, "rows": rows}
-    json.dump(res, open(os.path.join(a.out, "rotation_range.json"), "w"), indent=1)
-    print("written", os.path.join(a.out, "rotation_range.json"))
+    json.dump(res, open(os.path.join(a.out, a.name), "w"), indent=1)
+    print("written", os.path.join(a.out, a.name))
 
 
 if __name__ == "__main__":
