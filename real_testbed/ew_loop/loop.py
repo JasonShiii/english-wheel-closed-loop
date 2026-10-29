@@ -256,16 +256,19 @@ class DobotPlant:
     the last one as the block's measurement. Capture index = capture count of the session."""
     ADAPTER = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "robot_dobot", "run_toolpath_dobot.py")
 
-    def __init__(self, scripts, python=None, margin_top=12.0, auto_radii=False):
+    def __init__(self, scripts, python=None, margin_top=12.0, auto_radii=False, show_preview=False, sheet=None):
         self.scripts, self.python, self.margin_top, self.auto_radii = os.path.abspath(scripts), python or sys.executable, margin_top, auto_radii
-        self.k = 0
+        self.show_preview, self.sheet, self.k = show_preview, sheet, 0
         if not os.path.exists(os.path.join(self.scripts, "run_zigzag_oldclamps.py")):
             raise FileNotFoundError(f"{self.scripts}: run_zigzag_oldclamps.py not found")
 
     def _run(self, mode, round_dir, toolpath=None):
         out = os.path.join(round_dir, "robot"); os.makedirs(out, exist_ok=True)
         cmd = [self.python, self.ADAPTER, mode] + ([toolpath] if toolpath else []) + ["--scripts", self.scripts, "--out", out,
-                                                                                      "--margin-top", str(self.margin_top)] + (["--auto-radii"] if self.auto_radii else [])
+                                                                                      "--margin-top", str(self.margin_top)]
+        cmd += (["--auto-radii"] if self.auto_radii else []) + (["--show-preview"] if self.show_preview else [])
+        if mode == "baseline" and self.sheet is not None:
+            sj = os.path.join(out, "sheet.json"); json.dump(self.sheet.to_dict(), open(sj, "w"), indent=1); cmd += ["--sheet-json", sj]
         print("  >>> " + " ".join(f'"{c}"' if " " in c else c for c in cmd), flush=True)
         r = subprocess.run(cmd, cwd=self.scripts)
         p = os.path.join(out, "robot_run.json")

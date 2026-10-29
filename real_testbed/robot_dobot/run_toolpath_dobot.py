@@ -14,7 +14,9 @@ Before his driver runs, in memory only (zigzag_forming_oldclamps = zf):
   zf._capture_pointcloud_snapshot("pointcloud_pass0") skipped in `run` (the loop measured that state already)
   zf.run_zigzag_forming   -> no-op in `baseline` (his run_step_7_5 then only scans and parks at pos_9)
   zf._prompt_pass_radii   -> kept (the operator enters Rx/Rz between passes as today) unless --auto-radii
-  os.startfile            -> no image viewer; wheel_force.plot_last_wheel_force_path -> non-blocking
+  os.startfile            -> no image viewer unless --show-preview; wheel_force.plot_last_wheel_force_path -> non-blocking
+  run_output.write_run_info -> his run_info.txt gains the sheet geometry (X_DIM across the feed, Y_DIM along it,
+                             thickness, wheel-line distance, margins), the toolpath file, the zigzag centre and the pivots
 Then his driver runs as __main__ (connects, outputs/<timestamp>/, scans, forms, disables the robot) and this script
 writes <out>/robot_run.json: {"mode", "output_dir", "captures": {"<pass>": "<folder>"}, "passes_done", "ok"}.
 """
@@ -61,14 +63,36 @@ def configure(zf, zp, doc, tp, mode, margin_top, auto_radii):
     return piv
 
 
+def run_info_extra(sheet, tp=None, toolpath=None):
+    """the lines added to his run_info.txt (sheet block of toolpath.json, or the loop's sheet for the baseline)"""
+    e = {"Sheet X_DIM (mm, across the feed)": sheet["width_mm"], "Sheet Y_DIM (mm, along the feed)": sheet["length_mm"],
+         "Sheet Thickness (mm)": sheet["thickness_mm"], "Sheet Bottom To Wheel Line (mm)": sheet["clamp_mm"],
+         "Safe-zone Margins side / bottom / top (mm)": f"{sheet['margin_side_mm']} / {sheet['margin_bottom_mm']} / {sheet.get('margin_top_mm')}"}
+    if tp is not None:
+        rb = tp["robot"]
+        e.update({"Toolpath": toolpath, "Toolpath ID": tp["id"], "Zigzag Centre X (mm, planner frame)": rb.get("center_x_mm"),
+                  "Zigzag Start Y (mm)": rb.get("start_mm"), "Pivots (planner frame, mm)": json.dumps(tp["pivots_xy_mm"])})
+    return e
+
+
+def patch_run_info(extra):
+    import run_output as ro
+    _w = ro.write_run_info
+
+    def write_run_info(output_dir, **params):
+        return _w(output_dir, **params, **extra)
+    ro.write_run_info = write_run_info
+
+
 def safety(zf, piv):
     args = (zf.X_DIM_MM, zf.Y_DIM_MM, zf.MARGIN_SIDE_MM, zf.MARGIN_BOTTOM_MM, zf.MARGIN_TOP_MM, zf.SHEET_BOTTOM_TO_WHEEL_LINE_MM)
     oob = [p for p in piv if not zf.point_in_safe_zone(p, *args)]
     return zf.safe_zone_bounds(*args), oob
 
 
-def quiet(zf, wf, mode):
-    os.startfile = lambda *a, **k: None                                   # his code opens the preview in a viewer
+def quiet(zf, wf, mode, show_preview=False):
+    if not show_preview:
+        os.startfile = lambda *a, **k: None                               # his code opens the preview in a viewer
     if wf is not None and hasattr(wf, "plot_last_wheel_force_path"):
         _f = wf.plot_last_wheel_force_path
         wf.plot_last_wheel_force_path = lambda interactive=True: _f(interactive=False)   # the driver's last call blocks otherwise
@@ -101,6 +125,8 @@ def main():
     ap.add_argument("--out", required=True, help="where robot_run.json and the preview go")
     ap.add_argument("--margin-top", type=float, default=12.0, help="his MARGIN_TOP_MM (far-edge strip the wheel cannot reach)")
     ap.add_argument("--auto-radii", action="store_true", help="no Rx/Rz prompt between passes (keep the current radii)")
+    ap.add_argument("--show-preview", action="store_true", help="let his driver open its zigzag preview in the image viewer (desktop session)")
+    ap.add_argument("--sheet-json", help="(baseline) the loop's sheet (frames.Sheet.to_dict) for run_info.txt")
     a = ap.parse_args()
     if a.mode != "baseline" and not a.toolpath:
         ap.error(f"{a.mode} needs a toolpath.json")
@@ -119,9 +145,15 @@ def main():
 
     if a.mode == "baseline":
         doc = tp = None; piv = []
+        if a.sheet_json:
+            sh = json.load(open(a.sheet_json))
+            zf.X_DIM_MM, zf.Y_DIM_MM = float(sh["width_mm"]), float(sh["length_mm"])
+            zf.SHEET_BOTTOM_TO_WHEEL_LINE_MM = float(sh["clamp_mm"]); zf.Y_DIM_EFFECTIVE_MM = zf.Y_DIM_MM - zf.SHEET_BOTTOM_TO_WHEEL_LINE_MM
+            patch_run_info(run_info_extra(sh))
     else:
         doc, tp = load_toolpath(a.toolpath)
         piv = configure(zf, zp, doc, tp, a.mode, a.margin_top, a.auto_radii)
+        patch_run_info(run_info_extra(doc["sheet"], tp, os.path.abspath(a.toolpath)))
         bounds, oob = safety(zf, piv)
         res["constants"] = {k: getattr(zf, k) for k in ("X_DIM_MM", "Y_DIM_MM", "SHEET_BOTTOM_TO_WHEEL_LINE_MM", "MARGIN_SIDE_MM",
                                                        "MARGIN_BOTTOM_MM", "MARGIN_TOP_MM", "ZIGZAG_LV_MM", "ZIGZAG_ALPHA_DEG",
@@ -150,7 +182,7 @@ def main():
             print(f"[run_toolpath_dobot] check OK; his preview: {prev}", flush=True)
             return 0
 
-    quiet(zf, wf, a.mode)
+    quiet(zf, wf, a.mode, a.show_preview)
     print(f"[run_toolpath_dobot] {a.mode}: running {DRIVER} ...", flush=True)
     err = None
     try:

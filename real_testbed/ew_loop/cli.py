@@ -193,7 +193,8 @@ def cmd_rigloop(a):
     if a.plant == "replay":
         plant = L.ReplayPlant(a.replay_run)
     elif a.plant == "dobot":
-        plant = L.DobotPlant(a.robot_scripts, python=a.robot_python, margin_top=a.margin_top, auto_radii=a.auto_radii)
+        plant = L.DobotPlant(a.robot_scripts, python=a.robot_python, margin_top=a.margin_top, auto_radii=a.auto_radii,
+                             show_preview=a.show_preview, sheet=sheet)
     else:
         plant = L.FilePlant(a.exchange, a.captures)
     measurer = ME.RigMeasurer(calib_dir=a.calib)
@@ -275,6 +276,7 @@ def main(argv=None):
     rl.add_argument("--robot-scripts", help="(dobot) Danish's Scripts folder (English-Wheel---DoBot-Files/Scripts)")
     rl.add_argument("--robot-python", help="(dobot) python for his driver (default: this one)")
     rl.add_argument("--auto-radii", action="store_true", help="(dobot) skip his Rx/Rz prompt between passes")
+    rl.add_argument("--show-preview", action="store_true", help="(dobot) let his driver open its zigzag preview in the image viewer (desktop)")
     rl.add_argument("--margin-top", type=float, default=12.0, help="robot MARGIN_TOP_MM (far-edge strip the wheel cannot reach)")
     rl.add_argument("--exchange", help="(file) folder shared with the robot side: round_NN/toolpath.json out, captures/pointcloud_pass<k> in")
     rl.add_argument("--captures", help="(file) folder where the capture folders pointcloud_pass<k> appear, e.g. the robot software's "
