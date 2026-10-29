@@ -64,6 +64,14 @@ controller's reasons, `TRIAL.md` by `ew_loop/trial_report.py`); `trials/pull_tri
 `real_testbed/trials/<name>/`. The real sheet is 1.0 mm thick (user, 2026-10-29): `rigloop --thickness` default 1.0
 goes into toolpath.json and his run_info.txt; the model's prompt keeps the training text (0.6).
 
+2026-10-29 afternoon: first scripted robot run without a sheet (flat scan, zigzag A x1, zigzag B x2), records in
+`trials/2026-10-29_dry_two_zigzags_nopanel/`. Then, on the user's rules: a block = load once, passes back to back
+(no unload/reposition/reload where the ends coincide, i.e. the same zigzag reversed), one scan per block; records
+live (round.json before execution, his run folder mirrored during the run, `pull_trial.py --follow`). Checked
+without the robot on his real forming module (`robot_dobot/test_continuous_block.py`, on ideas2 and on his PC).
+His uncommitted local edit of 2026-10-28 17:30 (ACCELERATION/VELOCITY 5 -> 20 %, leg multipliers 0.1 -> 1.0) was
+in force for the runs of 10-29.
+
 ## 2. Before leaving (ideas2)
 
 ```

@@ -132,9 +132,16 @@ the loop prints `reference:` and writes `loops/sheet01/round_00/reference/refere
 the loop prints the plan, writes `round_0N/toolpath.json` + `preview.png`, asks `execute round N? [y/N]`; on `y` his
 driver runs the block (his safety check and preview first, then approach, load, the passes with a scan after each,
 unload) and the loop measures the last scan. (3) It stops by itself and writes `summary.png`.
-`round_0N/robot/robot_run.json` records his run folder (`Scripts/outputs/<timestamp>/`) for every block, and the
-whole run folder (run_info.txt, force CSVs, his zigzag preview, point clouds) is copied to `round_0N/robot/run_<timestamp>/`,
-so `loops/<name>/` holds the complete trial. `rounds.jsonl` has one line per round: the measurement before, the
+A block (2026-10-29): the wheel is loaded once, the block's passes run back to back (each pass starts where the
+last ended, in the opposite direction; checked on his own motion plans before any motion, else his unload ->
+reposition -> reload between passes), the wheel is unloaded, ONE scan at the scan pose. Directions alternate over
+the whole session (the next block starts opposite to the last pass). Records are written as they happen:
+`round_0N/round.json` + `toolpath.json` + `preview.png` + `replan.png` before the robot moves (status planned /
+executing / done), his run folder mirrored into `round_0N/robot/run_<timestamp>/` while his driver runs (every
+scan as soon as its PLYs are written; the log line `[live] scan saved`), `TRIAL.md` refreshed at every stage.
+`round_0N/robot/robot_run.json` records his run folder (`Scripts/outputs/<timestamp>/`) for every block, so
+`loops/<name>/` holds the complete trial. On ideas2, `python trials/pull_trial.py <name> --follow` mirrors it into
+`real_testbed/trials/<name>/` while it runs (every 15 s) and stops when the loop stops. `rounds.jsonl` has one line per round: the measurement before, the
 model's plan, the controller's decision and its reason, the toolpath given, his run folder, every capture measured.
 `python -m ew_loop.trial_report loops/<name>` writes `TRIAL.md` from it (tables + images). On ideas2,
 `python trials/pull_trial.py <name>` fetches the trial into `real_testbed/trials/<name>/` and writes the report.
