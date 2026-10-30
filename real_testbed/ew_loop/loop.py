@@ -336,7 +336,8 @@ class DobotPlant:
             res["local_copy"] = local
             res["captures"] = {k: os.path.join(local, os.path.basename(v.rstrip("\\/"))) for k, v in res.get("captures", {}).items()}
             json.dump(res, open(p, "w"), indent=1)
-        self.last_run = {k: res.get(k) for k in ("mode", "output_dir", "local_copy", "captures", "passes_done", "ok", "error", "secs")}
+        self.last_run = {k: res.get(k) for k in ("mode", "output_dir", "local_copy", "captures", "passes_done", "ok", "error", "secs",
+                                                 "wheel_load", "force_after_unload_N")}
         if not res.get("ok"):
             raise RuntimeError(f"robot {mode} failed: {res.get('error')} (captures {sorted(res.get('captures', {}))}, run folder {res.get('output_dir')})")
         return res

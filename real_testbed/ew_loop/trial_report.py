@@ -85,6 +85,10 @@ def main(root, quiet=False):
         ro = rec.get("robot") or {}
         ro_txt = (f"`{ntpath.basename(str(ro.get('output_dir') or '').rstrip(chr(92) + '/'))}` captures {sorted(ro.get('captures', {}))}"
                   + (f" {ro.get('secs')} s" if ro.get("secs") else "")) if ro else "(none)"
+        wl = (ro.get("wheel_load") or {}) if ro else {}
+        if wl.get("rolling"):
+            ro_txt += (f"<br>load {wl.get('threshold_N')} N set; rolling median {wl['rolling']['median_N']} N "
+                       f"(p5-p95 {wl['rolling']['p5_N']}-{wl['rolling']['p95_N']}, max {wl['rolling']['max_N']})")
         meas = "<br>".join(f"{m.get('capture', m.get('pass'))}: {m.get('amp_ratio')} / {m.get('pattern_corr')} / {m.get('z_min', '')}..{m.get('z_max', '')}"
                            + (" **(block)**" if m.get("block_measurement") else "") for m in rec.get("measured") or []) or "(none)"
         stop = (f"<br>stop: {rec['stop']}" if rec.get("stop") else "") + (f"<br><i>{rec['status']}</i>" if rec.get("status") else "")

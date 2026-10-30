@@ -362,6 +362,12 @@ def main():
     done = block["done"] if block is not None else 0
     if block is not None and block.get("wheel_stuck_N") is not None:
         err = f"wheel did not open after the unload: {block['wheel_stuck_N']} N (robot stopped where it was; release the wheel before anything else)"
+    try:                                             # the applied load is a calibration variable: record it for every run
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from wheel_load_stats import load_stats
+        res["wheel_load"] = load_stats(run_dir) if run_dir else None
+    except Exception as e:                           # noqa: BLE001  the record must never fail the run
+        res["wheel_load"] = {"error": f"{type(e).__name__}: {e}"}
     res.update({"force_after_unload_N": block.get("force_after_unload_N") if block else None,
                 "output_dir": run_dir, "captures": caps, "passes_done": done, "skipped_between_passes": block["skipped"] if block else [],
                 "ok": not missing and err is None, "error": err, "secs": round(time.time() - t0)})
