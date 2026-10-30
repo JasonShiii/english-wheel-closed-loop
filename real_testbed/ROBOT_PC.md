@@ -167,3 +167,21 @@ The model: `--server http://localhost:8765` is the service on ideas2 through a r
 Targets: `figures/rig/targets/*.npz` (clamped shapes from the simulator, 117 x 88 nodes on the 231 x 174 mm sheet).
 `CLOSED_LOOP.md` explains the loop step by step; `ew_loop/README.md` the code; the session runbook is
 `10_automatic_loop_session_2026-10-28.md`.
+
+## Pinned robot code (2026-10-30)
+
+Danish develops in his working folder (`Documents\GitHub\English-Wheel---DoBot-Files\Scripts`), and the adapter imports and
+runs his driver from whatever folder it is given. To keep the loop on a version it was verified with:
+
+- `robot_dobot\pin_robot_code.ps1 -Commit <id>` exports a commit read-only (`git archive`) to
+  `~\ew_robot_code_pinned\<id>\Scripts` and prints its file hashes. His working folder is not touched.
+- `robot_dobot\verified_robot_code.json` lists the verified versions. Today: `bbe1380`, functionally the code of the
+  2026-10-29 250 N runs. The adapter checks the hashes before `baseline` / `run` and refuses any other version, unless
+  `EW_ALLOW_UNVERIFIED_ROBOT_CODE=1`. `check` mode only reports.
+- `robotpc_loop.ps1` (and the dry-run launchers) use the pinned copy by default; `-RobotCode live` selects his working folder,
+  `-AllowUnverifiedRobotCode` overrides the check (only with Danish present, after he says the version is safe).
+- Every `robot_run.json` records the version (`robot_code.verified`) and the constants that matter (pos_9, scan pose,
+  wheel threshold, speeds, whether the driver has the J1 inspection rotation).
+- The J1 inspection rotation he added between passes (2026-10-30, uncommitted) is always skipped by the adapter.
+- To adopt a new version of his: pin it, rehearse it without a sheet, then add its hashes to the JSON.
+- Our own code steps back with git in the clone: `git -C ~\english-wheel-closed-loop checkout <commit>`.

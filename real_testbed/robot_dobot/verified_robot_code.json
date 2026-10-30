@@ -1,0 +1,15 @@
+{
+ "_doc": "Danish's driver versions this adapter was verified with. sha256 of the files with CRLF -> LF (line-ending independent). run_toolpath_dobot.py refuses baseline/run on any other version unless EW_ALLOW_UNVERIFIED_ROBOT_CODE=1. To add a version: export it, rehearse it (dry run without a sheet), then add its hashes here.",
+ "bbe1380": {
+  "commit": "bbe1380 (2026-10-30 12:05, 'small sheet dimension changes based on the current tests')",
+  "verified": "functionally the code of the 2026-10-29 250 N runs (06c55c6 + 20 % speeds + 250 N threshold; X_DIM_MM 220 is plot-only); pinned copy: ~/ew_robot_code_pinned/bbe1380/Scripts",
+  "files": {
+   "run_zigzag_oldclamps.py": "2faf5d4f087efd1b757bb76cde97f7f7a51d71f7577f70eb5b216b50d691fd3b",
+   "zigzag_forming_oldclamps.py": "1c7fdd17a582ab652a0be9f789e5caabc21c6b7e42abef0dabd61db2eda10399",
+   "wheel_force.py": "fa7837b8cbc1b0e78ba81c31b1d0bb9da2aba52370e4e22c3c1ce9ed187abb2f",
+   "zigzag_planner.py": "e93c0e813a58bcf6f1c188c924bfc9f85544d93702d08186e585a8015e8e2a31",
+   "hardware_config.py": "916b199f2e3d06e6a79847e469b512cf1eb4edd5b6ed51b8324c7eca711d5dee",
+   "mvs_recorder/Multi device capture with pointcloud laser on Auto.py": "eb12cdf7f23361b5a0d5ee8eef8548b5c86565c16580d7490e64169e8bd40f10"
+  }
+ }
+}

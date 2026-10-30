@@ -53,6 +53,11 @@ def configure(zf, zp, doc, tp, mode, margin_top, auto_radii, start_direction="l2
     pass 1 over the REVERSED pivot list ('left -> right'), pass 2 over the list as given, ...; for a block that
     must start right -> left the list is handed over reversed."""
     sheet, rb = doc["sheet"], tp["robot"]
+    if hasattr(zf, "_rotate_j1_relative"):          # 2026-10-30: his in-progress inspection swing between passes
+        def _no_j1(delta_deg, *a, **k):
+            print(f"[run_toolpath_dobot] J1 inspection rotation ({delta_deg:+.1f} deg) skipped: the loop scans at the scan pose, "
+                  "and between continuous passes the wheel is still loaded", flush=True)
+        zf._rotate_j1_relative = _no_j1
     piv = [(float(x), float(y)) for x, y in tp["pivots_xy_mm"]]
     if start_direction == "r2l":
         piv = piv[::-1]
@@ -121,6 +126,42 @@ def turnaround_coincides(zf, piv, tol_mm=0.5, tol_deg=0.5):
     d2 = _pose_gap(zf, end_b, start_a)
     ok = max(d1[0], d2[0]) <= tol_mm and max(d1[1], d2[1]) <= tol_deg
     return ok, {"end1_to_start2_mm_deg": [round(d1[0], 3), round(d1[1], 3)], "end2_to_start1_mm_deg": [round(d2[0], 3), round(d2[1], 3)]}
+
+
+VERIFIED_CODE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "verified_robot_code.json")
+
+
+def robot_code_check(scripts):
+    """which verified version of Danish's driver the --scripts folder holds (file hashes, line-ending independent);
+    {"verified": name or None, "differs": {name: [files]}}. His working folder changes while he develops; the loop runs
+    a pinned export of a verified commit (~/ew_robot_code_pinned/<commit>/Scripts) and refuses anything else."""
+    import hashlib
+    ref = json.load(open(VERIFIED_CODE))
+    out = {"verified": None, "differs": {}, "scripts": scripts}
+    for name, v in ref.items():
+        if name.startswith("_"):
+            continue
+        bad = []
+        for f, sha in v["files"].items():
+            p = os.path.join(scripts, f)
+            got = hashlib.sha256(open(p, "rb").read().replace(b"\r\n", b"\n")).hexdigest() if os.path.exists(p) else None
+            if got != sha:
+                bad.append(f)
+        if not bad:
+            out["verified"] = name
+            return out
+        out["differs"][name] = bad
+    return out
+
+
+def robot_constants(zf, wf):
+    """the driver constants that matter for the cell, recorded with every run"""
+    g = lambda m, k: getattr(m, k, None) if m is not None else None
+    thr = g(wf, "_FORCE_THRESHOLD")
+    return {"TARGET_POS_9": g(zf, "TARGET_POS_9"), "pointcloud_position": g(zf, "pointcloud_position"),
+            "wheel_threshold_N": None if thr is None else round(float(thr), 1), "ACCELERATION": g(zf, "ACCELERATION"),
+            "VELOCITY": g(zf, "VELOCITY"), "LEG_V_MULTIPLIER": g(zf, "LEG_V_MULTIPLIER"),
+            "has_J1_inspection_rotation": hasattr(zf, "_rotate_j1_relative")}
 
 
 UNLOAD_MAX_N = 30.0     # after an unload the wheel force must be below this, else stop (2026-10-29 incident: the motor stalled
@@ -266,6 +307,17 @@ def main():
     if a.mode != "baseline" and not a.toolpath:
         ap.error(f"{a.mode} needs a toolpath.json")
     scripts = os.path.abspath(a.scripts); out = os.path.abspath(a.out); os.makedirs(out, exist_ok=True)
+    code = robot_code_check(scripts)
+    allow = os.environ.get("EW_ALLOW_UNVERIFIED_ROBOT_CODE") == "1"
+    print(f"[run_toolpath_dobot] robot code {scripts}: " + (f"verified version {code['verified']}" if code["verified"]
+          else f"NOT a verified version (differs from {code['differs']})"), flush=True)
+    if code["verified"] is None and a.mode != "check" and not allow:
+        err = (f"refused: {scripts} is not a verified version of the robot code (changed files {code['differs']}); "
+               "use the pinned copy (~/ew_robot_code_pinned/<commit>/Scripts) or verify the new version first")
+        json.dump({"mode": a.mode, "ok": False, "error": err, "robot_code": code, "captures": {}, "passes_done": 0, "output_dir": None},
+                  open(os.path.join(out, "robot_run.json"), "w"), indent=1)
+        print(f"[run_toolpath_dobot] {err}", flush=True)
+        return 2
     os.chdir(scripts); sys.path.insert(0, scripts)
     if a.mode == "check":
         import matplotlib; matplotlib.use("Agg")
@@ -276,7 +328,8 @@ def main():
     except Exception:
         wf = None
     t0 = time.time()
-    res = {"mode": a.mode, "toolpath": os.path.abspath(a.toolpath) if a.toolpath else None, "scripts": scripts, "ok": False}
+    res = {"mode": a.mode, "toolpath": os.path.abspath(a.toolpath) if a.toolpath else None, "scripts": scripts, "ok": False,
+           "robot_code": {**code, "allowed_unverified": bool(code["verified"] is None and allow), "constants": robot_constants(zf, wf)}}
 
     if a.mode == "baseline":
         doc = tp = None; piv = []
