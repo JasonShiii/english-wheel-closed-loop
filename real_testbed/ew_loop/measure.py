@@ -85,6 +85,19 @@ def grid_nodes(xy, h, xg, yg, min_pts=3, fallback_cells=3):
     return Z
 
 
+def planner_box(ax, sheet, label=True):
+    """outline of the part of the sheet that goes to the planner (above the crop line, full width) and, dashed, the
+    wheel-reachable zone, on an axis in sheet-frame mm"""
+    from matplotlib.patches import Rectangle
+    W, L, yc = sheet.width_mm, sheet.length_mm, cfg.crop_y()
+    ax.add_patch(Rectangle((-W / 2, yc), W, L / 2 - yc, fill=False, ec="#e8590c", lw=1.8, zorder=5))
+    x0, x1, y0, y1 = cfg.reachable_rect()                 # the model's reachable zone (x +-72.1, y -67..75)
+    ax.add_patch(Rectangle((x0, y0), x1 - x0, y1 - y0, fill=False, ec="#e8590c", lw=1.0, ls="--", zorder=5))
+    if label:
+        ax.text(-W / 2 + 2, L / 2 - 2, "planner input (above the crop line)", color="#e8590c", fontsize=7, va="top", zorder=6)
+        ax.text(x0 + 2, y1 - 2, "wheel-reachable zone", color="#e8590c", fontsize=6, va="top", zorder=6)
+
+
 class FakeFieldMeasurer:
     """dry runs without a sheet (2026-10-29): the robot runs and scans for real and every real capture is measured and
     saved for the record (field_*_real.npz/png; failures tolerated), but the field handed to the controller and the
@@ -128,6 +141,12 @@ class FakeFieldMeasurer:
     def last_real(self):
         return getattr(self, "_last_real", None)
 
+    def full_view(self, pdir=None):
+        try:
+            return self.real.full_view(pdir) if self.real.frame is not None else None
+        except Exception:
+            return None
+
     def save(self, d):
         os.makedirs(d, exist_ok=True)
         if self.real.frame is not None:
@@ -157,6 +176,7 @@ class RigMeasurer:
                                 tag=f"{self.sheet.width_mm:g}x{self.sheet.length_mm:g}_rig", legacy_fit=legacy_fit)
         self.xg, self.yg = F.grid_for(self.sheet, step)
         self.frame = self.corr = self.sheet_mask = self.info = None
+        self._flat_raw = None
 
     # ---- the flat scan ------------------------------------------------------------------
     def reference(self, run):
@@ -170,6 +190,7 @@ class RigMeasurer:
         sheet = np.isfinite(Z0) & (np.abs(Z0) < D124.FLAT_TOL)
         sheet &= ~((np.abs(GX) > W / 2 - 14) & (GY < -L / 2 + self.hw_mm))   # clamp hardware along the gripped corners
         self.frame, self.corr, self.sheet_mask = Fr, corr, sheet
+        self._flat_raw = Z0
         info = {k: v for k, v in info.items() if k != "rect_score_curve"}
         self.info = {**info, "hw_mm": self.hw_mm, "flat_cells": int(sheet.sum()),
                      "flat_z_p0p5_p99p5": [round(float(np.nanpercentile(Z0[sheet], q)), 2) for q in (0.5, 99.5)] if sheet.any() else None}
@@ -187,6 +208,21 @@ class RigMeasurer:
         P, I = load_capture(pdir, self.calib)
         xy, h, m = self.chain.field_points(P, I, self.frame, self.corr)
         return grid_nodes(xy[m], h[m], self.xg, self.yg), int(m.sum())
+
+    def full_view(self, pdir=None):
+        """DISPLAY ONLY: the whole sheet incl. the cropped band below the crop line (pdir None = the flat scan), with the
+        chain's mask and despeckle and the best-fit plane of the observed region (the same plane the planner field
+        removes) subtracted everywhere. Shows what the crop removes; never fed to the planner or the controller."""
+        Z = self._flat_raw if pdir is None else self.raw_grid(pdir)[0]
+        if Z is None:
+            return None
+        Z, _ = self.masked(Z)
+        X, Y = np.meshgrid(self.xg, self.yg); m = np.isfinite(Z) & (Y >= cfg.crop_y())
+        if m.sum() < 10:
+            return None
+        A = np.column_stack([X[m], Y[m], np.ones(m.sum())]); cf = np.linalg.lstsq(A, Z[m], rcond=None)[0]
+        return F.HeightField(self.xg.astype(float), self.yg.astype(float), (Z - (cf[0] * X + cf[1] * Y + cf[2])).astype(np.float32),
+                             {"source": "full sheet, display only", "crop_y": cfg.crop_y()})
 
     def masked(self, Z):
         """the chain's own end product: sheet mask from the flat scan, despeckled (what danish_run2_measure_231x124 stores)"""
@@ -227,4 +263,5 @@ class RigMeasurer:
             ax[1].set_title(f"flat field after crop + plane removal: z {fld.zrange()[0]:.1f}..{fld.zrange()[1]:.1f} mm\ncamera offsets {self.info.get('camera_flat_offset_mm')}", fontsize=8)
         for a in ax:
             a.axhline(cfg.crop_y(), color="r", ls="--", lw=0.8); a.set_xlabel("x (mm)"); a.set_ylabel("y (mm), gripped edge at the bottom")
+            planner_box(a, self.sheet)
         fig.tight_layout(); fig.savefig(path, dpi=100); plt.close(fig)

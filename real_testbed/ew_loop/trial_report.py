@@ -50,6 +50,37 @@ def load_rounds(root):
     return out
 
 
+def scan_table(root, rounds):
+    """the per-scan report (2026-10-30): after every scan, corr and amp ratio of the CLEANED field against the target
+    (what the controller used), the cleaned z range (what the planner was told), and on the RAW field the sagitta across
+    x over a 200 mm chord, the zone curvature and radius, the principal sagitta and the ridge axis; plus the wheel load"""
+    rows, done = [], 0
+    fm = os.path.join(root, "round_00", "flat_metrics.json")
+    if os.path.exists(fm):
+        f = json.load(open(fm)); c, k = f.get("compare_cleaned") or {}, f.get("calib_raw") or {}
+        rows.append((0, "flat scan", c, k, None, None))
+    for rec in rounds:
+        for m in rec.get("measured") or []:
+            if not m.get("calib"):
+                continue
+            done = (rec.get("executed") or rec.get("block_passes") or 0) + done if m.get("block_measurement") else done
+            rows.append((done, f"round {rec['round']} capture {m.get('capture')}", m, m.get("calib") or {}, (rec.get("robot") or {}).get("wheel_load"),
+                         f"{m.get('z_min')}..{m.get('z_max')}"))
+    if len(rows) <= 1:
+        return []
+    L = ["## Per scan", "",
+         "corr / amp: the cleaned field against the target (the controller's numbers). z: the cleaned field's range (the planner's). "
+         "Sagitta, curvature: fits on the raw field (the noise averages out). Load: set threshold and the load-cell force while rolling.", "",
+         "| passes | scan | corr | amp ratio | span (mm) | z planner (mm) | sagitta x 200 (mm) | kxx (1/m) | radius x (mm) | principal sagitta 200 (mm) | ridge axis (deg) | load set / rolling median (N) | rolling p5-p95 / max (N) |",
+         "|" + "---|" * 13]
+    for done, lab, c, k, wl, zr in rows:
+        roll = (wl or {}).get("rolling") or {}
+        L.append(f"| {done} | {lab} | {c.get('pattern_corr')} | {c.get('amp_ratio')} | {c.get('span_cur')} | {zr or ''} | {k.get('sag_x_200_mm')} | {k.get('kxx_per_m')} | "
+                 f"{k.get('radius_x_mm')} | {k.get('sag_pmax_200_mm')} | {k.get('ridge_axis_deg')} | "
+                 + (f"{(wl or {}).get('threshold_N')} / {roll.get('median_N')} | {roll.get('p5_N')}-{roll.get('p95_N')} / {roll.get('max_N')} |" if roll else " | |"))
+    return L + [""]
+
+
 def main(root, quiet=False):
     root = os.path.abspath(root)
     st = json.load(open(os.path.join(root, "state.json"))) if os.path.exists(os.path.join(root, "state.json")) else {}
@@ -64,7 +95,7 @@ def main(root, quiet=False):
                  f"(span {last.get('span_cur')} / target {last.get('span_tgt')} mm)  ")
         if s.get("scans"):
             L.append(f"Flat scan: amp {s['scans'][0]['amp_ratio']} corr {s['scans'][0]['pattern_corr']}  ")
-    for p in ("target.png", "round_00/field_reference.png", "round_00/reference/reference_preview.png", "summary.png"):
+    for p in ("target.png", "round_00/scan_flat.png", "round_00/field_reference.png", "round_00/reference/reference_preview.png", "summary.png"):
         if os.path.exists(os.path.join(root, p)):
             L.append(f"![{p}]({p})")
     L.append("")
@@ -94,6 +125,7 @@ def main(root, quiet=False):
         stop = (f"<br>stop: {rec['stop']}" if rec.get("stop") else "") + (f"<br><i>{rec['status']}</i>" if rec.get("status") else "")
         L.append(f"| {rec['round']} | {b.get('amp_ratio')} / {b.get('pattern_corr')} | {plan_txt} | {ctrl}{stop} | {tp_txt} | {ro_txt} | {meas} |")
     L.append("")
+    L += scan_table(root, rounds)
     for rec in rounds:
         r = rec["round"]; rd = os.path.join(root, f"round_{r:02d}")
         L.append(f"## Round {r}")
@@ -102,7 +134,7 @@ def main(root, quiet=False):
         if rec.get("history_given") is not None:
             L.append(f"History given to the model: `{json.dumps(rec['history_given'])}`  ")
         imgs = [os.path.join(rd, "replan.png"), os.path.join(rd, "preview.png")] + sorted(glob.glob(os.path.join(rd, "robot", "run_*", "zigzag_preview.png"))) \
-             + sorted(glob.glob(os.path.join(rd, "field_*.png")))
+             + sorted(glob.glob(os.path.join(rd, "scan_*.png")))
         L.append(" ".join(f"![{os.path.basename(p)}]({_rel(root, p)})" for p in imgs if os.path.exists(p)))
         ro = rec.get("robot") or {}
         ri = os.path.join(ro.get("local_copy") or "", "run_info.txt") if ro.get("local_copy") else None

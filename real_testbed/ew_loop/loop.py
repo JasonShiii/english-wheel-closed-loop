@@ -373,6 +373,63 @@ def _save_field(fld, path_noext, profile=None):
     (profile.render if profile is not None else frames.field_png)(fld, path_noext + ".png")
 
 
+_SHEET_FOR_FIGS = [None]          # the loop's sheet, set by run_loop on the rig path (figures only)
+
+
+def _rig_tools():
+    """modules of the rig path (imported on first use: measure puts the model's and the chain's folders on sys.path)"""
+    from . import measure as ME, clean as CL
+    import danish_run2_metrics_param as MP      # bridge_checks: sagitta / curvature of the per-scan report
+    import render as RND                        # newsheet_pipeline: the model's image frame
+    return ME, CL, MP, RND
+
+
+def _clean(fld, sheet):
+    ME, CL, _, _ = _rig_tools()
+    return CL.clean_field(fld, width_mm=sheet.width_mm, crop_y=ME.cfg.crop_y(), y_top=sheet.length_mm / 2)
+
+
+def _calib_metrics(fld, sheet):
+    """the per-scan calibration numbers on the RAW field (the fits average the noise out): sagitta across x over a
+    200 mm chord (quadratic over |y| < 10, |x| < 100), the zone curvature kxx and its radius, the principal-curvature
+    sagitta over 200 mm and the ridge axis (quadratic over |y| < 30, |x| < 100)"""
+    try:
+        _, _, MP, _ = _rig_tools()
+        m, _ = MP.make(sheet.length_mm)["metrics"](fld.x_mm.astype(float), fld.y_mm.astype(float), fld.z_mm.astype(float))
+        k = m.get("zone_kxx")
+        return {"sag_x_200_mm": m.get("sag_x_200"), "kxx_per_m": None if k is None else round(k * 1e3, 3),
+                "radius_x_mm": None if not k else round(abs(1.0 / k)), "sag_pmax_200_mm": m.get("sag_pmax_200"),
+                "ridge_axis_deg": None if m.get("ridge_axis_deg") is None else round(float(m["ridge_axis_deg"]), 1)}
+    except Exception as e:                          # the record must never stop the loop
+        return {"error": f"{type(e).__name__}: {e}"}
+
+
+def _scan_png(path, full, cleaned, sheet, title):
+    """round_NN/scan_*.png (people only): left the whole measured sheet incl. the cropped band (raw, display), right the
+    cleaned field the planner and the controller get; the orange box = the planner input, dashed = reachable zone"""
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        ME, _, _, _ = _rig_tools()
+        panels = ([(full, "measured (raw, whole sheet, display only)")] if full is not None else []) + [(cleaned, "cleaned: what the planner and the controller get")]
+        fig, ax = plt.subplots(1, len(panels), figsize=(6.2 * len(panels), 4.6), squeeze=False)
+        for a, (fld, ttl) in zip(ax[0], panels):
+            z = fld.z_mm.astype(float); ext = (fld.x_mm[0], fld.x_mm[-1], fld.y_mm[0], fld.y_mm[-1])
+            lo, hi = (np.nanpercentile(z, [0.5, 99.5]) if np.isfinite(z).any() else (0, 1))
+            cm = matplotlib.colormaps["viridis"].copy(); cm.set_bad("white")
+            im = a.imshow(np.ma.masked_invalid(z), origin="lower", extent=ext, cmap=cm, vmin=lo, vmax=hi)
+            plt.colorbar(im, ax=a, fraction=0.035, label="z (mm)")
+            a.axhline(ME.cfg.crop_y(), color="#e8590c", ls=":", lw=0.8)
+            ME.planner_box(a, sheet)
+            a.set_xlim(-sheet.width_mm / 2 - 6, sheet.width_mm / 2 + 6); a.set_ylim(-sheet.length_mm / 2 - 4, sheet.length_mm / 2 + 6)
+            a.set_xlabel("x (mm)"); a.set_ylabel("y (mm), gripped edge at the bottom")
+            a.set_title(f"{ttl}\nz {lo:.1f} .. {hi:.1f} mm (p0.5..p99.5)", fontsize=9, loc="left")
+        fig.suptitle(title, fontsize=10, x=0.01, ha="left"); fig.tight_layout(); fig.savefig(path, dpi=100); plt.close(fig)
+    except Exception as e:
+        print(f"  (scan figure not written: {e})", flush=True)
+
+
 def _replan_png(rd, rec, doc, cur, target):
     """round_NN/replan.png: what the planner saw (the two heatmaps, their heights, amp/corr) and what came out
     (the full plan, the controller's decision and the toolpath handed to the robot, with pass directions)"""
@@ -382,12 +439,21 @@ def _replan_png(rd, rec, doc, cur, target):
     import matplotlib.image as mpimg
     fig = plt.figure(figsize=(16, 6.2))
     gs = fig.add_gridspec(2, 3, height_ratios=[4.2, 2.0])
-    for j, (name, fld, ttl) in enumerate((("cur.png", cur, "input: current shape"), ("tgt.png", target, "input: target"))):
+    try:
+        ME, _, _, RND = _rig_tools(); fr = RND.frame()       # the model image's extent in sheet mm
+    except Exception:
+        ME = fr = None
+    for j, (name, fld, ttl) in enumerate((("cur.png", cur, "input: current shape (cleaned)"), ("tgt.png", target, "input: target"))):
         ax = fig.add_subplot(gs[0, j]); p = os.path.join(rd, name)
         if os.path.exists(p):
-            ax.imshow(mpimg.imread(p))
-        ax.set_axis_off(); zr = fld.zrange()
-        ax.set_title(f"{ttl}: z {zr[0]:.1f} .. {zr[1]:.1f} mm (span {zr[1] - zr[0]:.1f})", fontsize=10)
+            ax.imshow(mpimg.imread(p), extent=fr if fr is not None else None)
+        zr = fld.zrange()
+        if fr is not None and ME is not None and _SHEET_FOR_FIGS[0] is not None:
+            ME.planner_box(ax, _SHEET_FOR_FIGS[0], label=False); ax.tick_params(labelsize=7)
+        else:
+            ax.set_axis_off()
+        ax.set_title(f"{ttl}: z {zr[0]:.1f} .. {zr[1]:.1f} mm (span {zr[1] - zr[0]:.1f})\n= the planner's image (box: its sheet region) and the z range in its prompt",
+                     fontsize=9)
     ax = fig.add_subplot(gs[0, 2]); p = os.path.join(rd, "preview.png")
     if os.path.exists(p):
         ax.imshow(mpimg.imread(p))
@@ -458,6 +524,10 @@ def run_loop(out, sheet, target_path, planner, plant, n=3, max_passes=30, schema
     os.makedirs(out, exist_ok=True)
     rig = measurer is not None
     target = HeightField.load(target_path) if rig else frames.mask_clamp_band(HeightField.load(target_path), sheet)
+    target_source = target
+    if rig:                                         # one span rule for both images and the controller: p0.5..p99.5
+        _SHEET_FOR_FIGS[0] = sheet
+        target = _rig_tools()[1].robust_clip(target, "target clipped to its robust range (the rule of the cleaned current)")
     xg, yg = (measurer.xg, measurer.yg) if rig else frames.grid_for(sheet, step)
     if target.z_mm.shape != (len(yg), len(xg)):
         raise ValueError(f"target grid {target.z_mm.shape} is not the loop's grid {(len(yg), len(xg))}")
@@ -481,7 +551,8 @@ def run_loop(out, sheet, target_path, planner, plant, n=3, max_passes=30, schema
         os.makedirs(r0, exist_ok=True)
         base = plant.baseline(r0)
         if rig:
-            cur = measurer.reference(os.path.dirname(base.pass_dir))
+            cur_raw = measurer.reference(os.path.dirname(base.pass_dir))
+            cur = _clean(cur_raw, sheet)
             measurer.save(ref_dir)
             measurer.preview(os.path.join(ref_dir, "reference_preview.png"), cur)
             log(f"reference: {measurer.info}")
@@ -510,6 +581,14 @@ def run_loop(out, sheet, target_path, planner, plant, n=3, max_passes=30, schema
             cur = frames.mask_clamp_band(base.field, sheet)
         _save_field(cur, os.path.join(r0, "field_reference"), profile)
         _save_field(target, os.path.join(out, "target"), profile)
+        if rig:
+            _save_field(cur_raw, os.path.join(r0, "field_reference_raw"), profile)
+            target_source.save(os.path.join(out, "target_source.npz"))
+            _scan_png(os.path.join(r0, "scan_flat.png"), measurer.full_view(None) if hasattr(measurer, "full_view") else None, cur, sheet,
+                      f"round 0: flat scan {os.path.dirname(base.pass_dir)}")
+            json.dump({"compare_cleaned": _compare(cur, target, robust, allow_no_sheet, log), "calib_raw": _calib_metrics(cur_raw, sheet),
+                       "cleaning": cur.meta.get("cleaning"), "coverage": cur_raw.meta.get("coverage_observed")},
+                      open(os.path.join(r0, "flat_metrics.json"), "w"), indent=1, default=str)
         state = ST.LoopState(max_passes, robust)
         state.record_initial(_compare(cur, target, robust, allow_no_sheet, log))
         first_round = 1
@@ -582,9 +661,15 @@ def run_loop(out, sheet, target_path, planner, plant, n=3, max_passes=30, schema
             # cadence of 2026-10-28: the robot runs the whole block, ONE capture at the scan pose; the controller
             # is updated once per block (the block gain split per pass with the 0.8 decay, state.record_block)
             for i, cap in enumerate(caps):
-                fld = measurer.field(cap.pass_dir)
+                fld_raw = measurer.field(cap.pass_dir)
+                fld = _clean(fld_raw, sheet)          # the planner and the controller get the cleaned field
                 name = os.path.join(rd, f"field_{cap.toolpath_id}_capture{cap.pass_index}")
                 _save_field(fld, name, profile)
+                _save_field(fld_raw, name + "_raw", profile)
+                calib = _calib_metrics(fld_raw, sheet)
+                _scan_png(os.path.join(rd, f"scan_{cap.toolpath_id}_capture{cap.pass_index}.png"),
+                          measurer.full_view(cap.pass_dir) if hasattr(measurer, "full_view") else None, fld, sheet,
+                          f"round {r}: capture {cap.pass_index} after {executed} pass(es) of this block; sagitta x200 {calib.get('sag_x_200_mm')} mm (raw field)")
                 real = measurer.last_real() if hasattr(measurer, "last_real") else None
                 if real is not None:                       # the real scan's field, kept next to the stand-in for the record
                     _save_field(real, name + "_real", profile)
@@ -595,11 +680,12 @@ def run_loop(out, sheet, target_path, planner, plant, n=3, max_passes=30, schema
                     state.record_block(mt, first, r, cap.toolpath_id, cap.pass_index, executed)
                 log(f"  capture {cap.pass_index} ({'block measurement after %d pass(es)' % executed if final else 'intermediate, record only'}): "
                     f"amp {mt['amp_ratio']:.3f} corr {mt['pattern_corr']:.4f} z {fld.zrange()[0]:.1f}..{fld.zrange()[1]:.1f} mm "
-                    f"coverage {fld.meta.get('coverage_observed')}")
+                    f"coverage {fld_raw.meta.get('coverage_observed')} sagitta {calib.get('sag_x_200_mm')} mm")
                 rec["measured"].append({"capture": cap.pass_index, "block_measurement": final, "source": cap.pass_dir, "field": name + ".npz",
+                                        "field_raw": name + "_raw.npz", "cleaning": fld.meta.get("cleaning"), "calib": calib,
                                         "fed_to_planner": fld.meta.get("source"), "real_error": fld.meta.get("real_error"),
                                         "z_min": round(float(fld.zrange()[0]), 2), "z_max": round(float(fld.zrange()[1]), 2),
-                                        "coverage": fld.meta.get("coverage_observed"), **mt})
+                                        "coverage": fld_raw.meta.get("coverage_observed"), **mt})
             if not caps:
                 stop_now = f"no capture after round {r}"
             elif executed < k:

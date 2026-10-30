@@ -9,6 +9,10 @@ Robustness (training side only, the CURRENT image; the target stays clean):
   --fake : with probability p_fake the current field comes from the fake camera rig (ew_loop/synthetic)
            through the real scan_to_field pipeline (0.8 mm point noise, gripper bar, flying pixels; the upper
            wheel only when cfg.SCAN_POSITION is False)
+Schema v7 (2026-10-30, data of gen_realsheet.py; chosen by the dataset's manifest "prompt_schema"): the v5facts prompt with
+the zigzag orientation as rot_deg (integer degrees, CCW in the sheet frame; 0 / 90 = the old rot) and the trajectory's growth
+factor g in the REQUEST (and explained in the PROCESS FACTS); the label's zigzag is {"rot_deg": int, "N": int}. The sheet /
+dose of the prompt follow the dataset's profile (cfg.apply_manifest), so old datasets render and prompt exactly as before.
 Usage: python pairs.py --data data_mini --out pairs_mini --cap 30 --val-frac 0.2 --aug --fake 0.25"""
 import argparse, glob, json, os
 from multiprocessing import Pool
@@ -55,6 +59,16 @@ object, no other text:
 Entries are in execution order; hits >= 1. If the last history action is not finished, the first plan \
 entry may continue the same wa with the remaining hits."""
 
+_ZZ_V5 = """the toolpath applied inside that area: rot is its orientation (0: strips run along y, stacked along x; \
+90: strips run along x, stacked along y), N is the number of strips (density)."""
+_ZZ_V7 = """the toolpath applied inside that area: rot_deg is its orientation in integer degrees, counter-clockwise in \
+the sheet frame as seen in the images (0: strips run along y, stacked along x; 90: strips run along x, stacked along y; \
+any other angle rotates the strips and the working area together about the area centre, e.g. +30 tilts the strips so \
+that their upper end moves toward -x), N is the number of strips (density)."""
+_JSON_V5, _JSON_V7 = '"zigzag": {{"rot": 0 or 90, "N": int}}', '"zigzag": {{"rot_deg": int, "N": int}}'
+assert PROMPT_SYSTEM.count(_ZZ_V5) == 1 and PROMPT_SYSTEM.count(_JSON_V5) == 1
+PROMPT_SYSTEM_V7 = PROMPT_SYSTEM.replace(_ZZ_V5, _ZZ_V7).replace(_JSON_V5, _JSON_V7)      # schema v7: continuous angle + growth factor
+
 # The per-request part. Our model is trained on PROMPT_SYSTEM + "\n\n" + PROMPT_USER as one user message; the closed
 # models get PROMPT_SYSTEM once as the system message and PROMPT_USER (+ the two images) per example / query turn, so
 # the invariant text is not repeated k times in a k-shot request. split_prompt() recovers the two parts.
@@ -63,6 +77,12 @@ PROMPT_USER = """REQUEST
 Image 1 (CURRENT) z range = [{cz0}, {cz1}] mm. Image 2 (TARGET) z range = [{tz0}, {tz1}] mm.
 HISTORY:
 {history}"""
+PROMPT_USER_V7 = """REQUEST
+Image 1 (CURRENT) z range = [{cz0}, {cz1}] mm. Image 2 (TARGET) z range = [{tz0}, {tz1}] mm.
+Growth factor of this sheet: g = {g:.2f} relative to the nominal {gtop:g} (see PROCESS FACTS).
+HISTORY:
+{history}"""
+SCHEMA = "v5"          # set by main() from the dataset's manifest ("prompt_schema": "v7") / facts.json; v5 and v5facts otherwise
 
 
 # Lean prompt (schema v6lean, 2026-10-27): for the fine-tuned model only. The constant process text of v5facts carries no
@@ -106,21 +126,31 @@ def facts_block():
 
 def system_prompt():
     s = cfg.SHEET; x_lo, x_hi, y_lo, y_hi = cfg.reachable_rect(); fr = R.frame()
-    return PROMPT_SYSTEM.format(W=s.width_mm, L=s.length_mm, t=s.thickness_mm, ylo=-s.length_mm / 2, yc=cfg.crop_y(),
+    return (PROMPT_SYSTEM_V7 if SCHEMA == "v7" else PROMPT_SYSTEM).format(W=s.width_mm, L=s.length_mm, t=s.thickness_mm, ylo=-s.length_mm / 2, yc=cfg.crop_y(),
                                 xlo_s=-s.width_mm / 2, xhi_s=s.width_mm / 2, yhi_s=s.length_mm / 2,
                                 xlo=x_lo, xhi=x_hi, yzlo=y_lo, yhi=y_hi, mside=s.margin_side_mm, mtop=cfg.MARGIN_TOP_MM,
                                 m=R.MARGIN_MM, fx0=fr[0], fx1=fr[1], fy0=fr[2], fy1=fr[3], facts=facts_block())
 
 
-def user_prompt(cz, tz, history):
+def user_prompt(cz, tz, history, g=None):
+    """g: the trajectory's growth factor (schema v7 only; required there)"""
     hist = json.dumps(history, indent=1) if history else "(empty - the sheet is untouched)"
+    if SCHEMA == "v7":
+        assert g is not None, "schema v7 needs the growth factor"
+        return PROMPT_USER_V7.format(cz0=round(float(cz[0]), 2), cz1=round(float(cz[1]), 2), tz0=round(float(tz[0]), 2),
+                                     tz1=round(float(tz[1]), 2), g=float(g), gtop=cfg.DOSE["gtop"], history=hist)
     return PROMPT_USER.format(cz0=round(float(cz[0]), 2), cz1=round(float(cz[1]), 2),
                               tz0=round(float(tz[0]), 2), tz1=round(float(tz[1]), 2), history=hist)
 
 
-def build_prompt(cz, tz, history):
+def build_prompt(cz, tz, history, g=None):
     """the text our model is trained on: system part + per-request part in ONE user message"""
-    return system_prompt() + "\n\n" + user_prompt(cz, tz, history)
+    return system_prompt() + "\n\n" + user_prompt(cz, tz, history, g)
+
+
+def label_schema():
+    """the entry schema of common.slice_actions / entry_desc for the current prompt schema"""
+    return "v7" if SCHEMA == "v7" else "v2"
 
 
 def mask_crop(field):
@@ -228,9 +258,11 @@ def process_traj(args):
             fc = augment(fc, rng); how = "aug"
         pc, pt = os.path.join(outdir, "images", f"{tag}_cur.png"), os.path.join(outdir, "images", f"{tag}_tgt.png")
         R.field_png(fc, pc); R.field_png(ft, pt)
-        hist, plan = slice_actions(rec["was"], s, t, schema="v2")
-        prompt = build_prompt(fc.zrange(), ft.zrange(), hist)
-        samples.append({"meta": {"source": rec["id"], "category": rec["category"], "cut": [s, t], "current": how},
+        hist, plan = slice_actions(rec["was"], s, t, schema=label_schema())
+        prompt = build_prompt(fc.zrange(), ft.zrange(), hist, rec.get("growth_factor"))
+        meta = {"source": rec["id"], "category": rec["category"], "cut": [s, t], "current": how}
+        if SCHEMA == "v7": meta["g"] = rec["growth_factor"]
+        samples.append({"meta": meta,
                         "messages": [{"role": "user", "content": [{"type": "image", "image": f"images/{tag}_cur.png"},
                                                                   {"type": "image", "image": f"images/{tag}_tgt.png"},
                                                                   {"type": "text", "text": prompt}]},
@@ -242,10 +274,16 @@ def main(a):
     datadir, outdir = os.path.join(HERE, a.data), os.path.join(HERE, a.out)
     os.makedirs(os.path.join(outdir, "images"), exist_ok=True)
     man = json.load(open(os.path.join(datadir, "manifest.json"))); rng = np.random.default_rng(a.seed)
-    global FACTS_TEXT
+    prof = cfg.apply_manifest(man)                            # sheet / dose of THIS dataset (before the pool forks)
+    global FACTS_TEXT, SCHEMA
     fp = os.path.join(datadir, "facts.json")
     FACTS_TEXT = json.load(open(fp))["facts"] if os.path.exists(fp) else None
-    schema = "v5facts" if FACTS_TEXT else "v5"; print(f"prompt schema {schema}" + (f" ({fp})" if FACTS_TEXT else ""))
+    if man.get("prompt_schema") == "v7":
+        assert FACTS_TEXT, "schema v7 needs <data>/facts.json (facts.py)"
+        SCHEMA = schema = "v7"
+    else:
+        schema = "v5facts" if FACTS_TEXT else "v5"
+    print(f"prompt schema {schema}" + (f" ({fp})" if FACTS_TEXT else "") + f"; profile {prof['name']}: {cfg.SHEET.thickness_mm} mm, dose {cfg.DOSE}")
     val_ids = set()
     for cat in sorted({m["category"] for m in man["cases"]}):
         ids = [m["id"] for m in man["cases"] if m["category"] == cat]
@@ -263,7 +301,7 @@ def main(a):
     for name, rows in (("train", tr), ("val", va)):
         with open(os.path.join(outdir, f"{name}.jsonl"), "w") as f:
             for r in rows: f.write(json.dumps(r) + "\n")
-    json.dump({"sheet": cfg.SHEET.to_dict(), "dose": cfg.DOSE, "tau_mm": cfg.TAU_PAIR_MM, "aug": a.aug, "fake": a.fake,
+    json.dump({"sheet": cfg.SHEET.to_dict(), "dose": cfg.DOSE, "profile": cfg.PROFILE, "decay": cfg.DECAY, "tau_mm": cfg.TAU_PAIR_MM, "aug": a.aug, "fake": a.fake,
                "prompt_schema": schema, "crop_mm": cfg.CROP_MM, "reachable": cfg.reachable_zones(),
                "val_ids": sorted(val_ids), "train": len(tr), "val": len(va), "per_category": percat, "current_images": how},
               open(os.path.join(outdir, "pairs_meta.json"), "w"), indent=1)

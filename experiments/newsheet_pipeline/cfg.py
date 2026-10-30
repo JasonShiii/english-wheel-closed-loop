@@ -95,3 +95,52 @@ def pack_cycles(d, bc=None):
     for f in glob.glob(os.path.join(d, "*.vtp")) + glob.glob(os.path.join(d, "*.dat")):
         os.remove(f)
     return len(finals)
+
+
+# ---- physics profiles (2026-10-30) ----------------------------------------------------------------------------------
+# The defaults above (0.6 mm, gtop 9e-4, 300 N) stay what the existing datasets were made with. The real sheet of the
+# closed-loop runs is 231 x 174 x 1.0 mm at 250 N: gtop 6.5e-4, gbot 1e-4, decay 0.8 (free plate;
+# dose_fit/RECALIBRATION_sheet1_231x174_1mm_250N_2026-10-29.md). A dataset records its profile in manifest.json
+# ("profile", "sheet", "dose", "decay"); apply_manifest() switches this module to it, so pairs.py / facts.py / the
+# evaluation render and prompt with the right sheet for old and new data alike (old manifests -> the original profile).
+DECAY = 0.8                                       # per-hit hardening factor (category_tests.HARDENING: beta = -ln 0.8)
+PROFILE = "t0.6_g9e-4"                            # name of the profile the globals above describe
+SHEET_T10 = Sheet(width_mm=231.0, length_mm=174.0, thickness_mm=1.0, clamp_mm=20.0, margin_side_mm=43.4, margin_bottom_mm=0.0,
+                  pad_offsets_from_left_mm=(6.5, 224.5), pad_diameter_mm=13.0)
+DOSE_T10 = dict(gtop=6.5e-4, gbot=1e-4, ortho=-0.5)
+PROFILES = {"t0.6_g9e-4": dict(sheet=SHEET, dose=DOSE, decay=0.8, wheel_force_n=300.0),
+            "t1.0_g6.5e-4": dict(sheet=SHEET_T10, dose=DOSE_T10, decay=0.8, wheel_force_n=250.0)}
+
+
+def profile(name=None):
+    """the named profile (default: the one currently applied) as a dict with its name"""
+    return dict(PROFILES[name or PROFILE], name=name or PROFILE)
+
+
+def apply_profile(name):
+    """switch SHEET / DOSE / DECAY / WHEEL_FORCE_N to a named profile (module globals: every `cfg.X` reader sees it)"""
+    global SHEET, DOSE, DECAY, WHEEL_FORCE_N, PROFILE
+    p = PROFILES[name]
+    SHEET, DOSE, DECAY, WHEEL_FORCE_N, PROFILE = p["sheet"], dict(p["dose"]), p["decay"], p["wheel_force_n"], name
+    return profile(name)
+
+
+def apply_manifest(man):
+    """dataset-level record (manifest.json dict, its path or the dataset dir) -> apply its profile. Old manifests have no
+    "profile" key and carry sheet + dose only: matched against PROFILES by thickness and gtop, else the original profile."""
+    import json
+    if isinstance(man, str):
+        man = json.load(open(man if man.endswith(".json") else os.path.join(man, "manifest.json")))
+    name = man.get("profile")
+    if name is None:
+        t = man.get("sheet", {}).get("thickness_mm", PROFILES["t0.6_g9e-4"]["sheet"].thickness_mm)
+        g = man.get("dose", {}).get("gtop", PROFILES["t0.6_g9e-4"]["dose"]["gtop"])
+        name = next((k for k, p in PROFILES.items() if abs(p["sheet"].thickness_mm - t) < 1e-6 and abs(p["dose"]["gtop"] - g) < 1e-9),
+                    "t0.6_g9e-4")
+    return apply_profile(name)
+
+
+def hardening(decay=None):
+    """the simulator's hardening block at this per-hit decay (category_tests.HARDENING is decay 0.8)"""
+    import math, category_tests as ct
+    return {**ct.HARDENING, "beta": float(-math.log(decay or DECAY))}

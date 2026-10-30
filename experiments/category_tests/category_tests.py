@@ -50,7 +50,9 @@ CATS = ["C1", "C2", "C3", "C4", "C3_lightfirst"]
 
 # ---- inscription rule (rot=0: strips along y, stacking along x) ----------------
 def strip_stack_dims(wx, wy, rot):
-    return (wy, wx) if rot == 0 else (wx, wy)
+    """(leg side, stacking side) of the box. rot 0: legs along y; 90: legs along x. Generalised 2026-10-30 to any angle
+    (newsheet_pipeline/zigzag_rot.py): legs follow the box's y side when round(rot / 90) is even, its x side when odd."""
+    return (wy, wx) if int(round(float(rot) / 90.0)) % 2 == 0 else (wx, wy)
 
 
 def feasible_N(wx, wy, rot, nmax=N_MAX):

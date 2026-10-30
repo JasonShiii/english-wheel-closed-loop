@@ -12,8 +12,11 @@ def wa_desc(wa):
     return {"center_xy": [wa["cx"], wa["cy"]], "size_wh": [wa["wx"], wa["wy"]]}
 
 
-def zz_desc(wa):
-    """zigzag parameters, separated from the WA geometry (schema v2)."""
+def zz_desc(wa, schema=None):
+    """zigzag parameters, separated from the WA geometry (schema v2). Schema v7 (2026-10-30, continuous angle): the
+    orientation is 'rot_deg' in integer degrees (CCW in the sheet frame; 0 and 90 are the old rot values)."""
+    if schema == "v7":
+        return {"rot_deg": int(round(float(wa["rot_deg"] if "rot_deg" in wa else wa["rot"]))), "N": wa["N"]}
     return {"rot": wa["rot"], "N": wa["N"]}
 
 
@@ -24,17 +27,19 @@ SCHEMA_DEFAULT = "v2"          # v2 = wa/zigzag separated (2026-08-28). A checkp
 def entry_desc(wa, n, key="hits", schema=SCHEMA_DEFAULT):
     if schema in ("v1", "v1facts"):          # v1facts = v1 entries + PROCESS_FACTS in the prompt
         return {"wa": {**wa_desc(wa), **zz_desc(wa)}, key: n}
-    return {"wa": wa_desc(wa), "zigzag": zz_desc(wa), key: n}
+    return {"wa": wa_desc(wa), "zigzag": zz_desc(wa, schema), key: n}
 
 
 def read_entry(e):
-    """Tolerant reader: accepts schema v2 {wa:{geometry}, zigzag:{rot,N}, hits}
-    AND legacy v1 {wa:{geometry, rot, N}, hits}. Returns a flat dict."""
+    """Tolerant reader: accepts schema v2 {wa:{geometry}, zigzag:{rot,N}, hits}, legacy v1 {wa:{geometry, rot, N}, hits}
+    AND schema v7 {wa:{geometry}, zigzag:{rot_deg,N}, hits}. Returns a flat dict whose 'rot' and 'rot_deg' both hold the
+    orientation in integer degrees (rot 0 / 90 of the old schemas map to rot_deg 0 / 90)."""
     wa = e["wa"]
     zz = e.get("zigzag", wa)
+    rot = int(round(float(zz["rot_deg"] if "rot_deg" in zz else zz["rot"])))
     return dict(cx=float(wa["center_xy"][0]), cy=float(wa["center_xy"][1]),
                 wx=float(wa["size_wh"][0]), wy=float(wa["size_wh"][1]),
-                rot=int(zz["rot"]), N=int(zz["N"]),
+                rot=rot, rot_deg=rot, N=int(zz["N"]),
                 n=int(e.get("hits", e.get("hits_done", 0))))
 
 
