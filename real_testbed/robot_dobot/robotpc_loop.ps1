@@ -1,13 +1,16 @@
 param([string]$OutName = "sheet01", [string]$Target = "S1_t042_c4", [int]$N = 3, [int]$MaxPasses = 12,
       [switch]$Resume, [switch]$Confirm, [switch]$AskRadii, [switch]$Show,
       [string]$RobotCode = "", [switch]$AllowUnverifiedRobotCode,
-      [string]$Schema = "v5facts", [double]$MaxAngle = 0, [string]$Script = "")
+      [string]$Schema = "v5facts", [double]$MaxAngle = 0, [string]$Script = "", [string]$ManualWheel = "off")
 # The closed loop on the Dobot cell. From the DESKTOP terminal the force monitors and (with -Show) his preview are visible:
 #   powershell -ExecutionPolicy Bypass -File C:\Users\"Ping Guo Lab"\robotpc_loop.ps1 -OutName sheet01 -Confirm -Show
 # -Confirm: the loop asks before every block; -AskRadii: his Rx/Rz prompt between passes; log = loops\<OutName>.log
 # -Schema v8: the model service runs the v8 (dataset D) checkpoint; the loop refuses a service with another schema.
 # -MaxAngle 45: tilted areas up to |45| deg (only what Danish has cleared; 0 = refused). -Script <json under real_testbed>:
 #   scripted blocks, no planner (e.g. -Script figures/rig/scripts/demoB_D5_t019_4blocks.json -MaxAngle 45 -Target D5_t019_c10)
+# -ManualWheel confirm: the operator loads / unloads the wheel by hand at every block and presses ENTER here (or double-clicks
+#   resume.bat; ENTER only when started from the desktop); -ManualWheel auto: the run continues by itself once the load cell
+#   is in the window (3 s) after a 5 s countdown. The operator reads the force on the independent force display.
 $ErrorActionPreference = "Continue"
 $env:PYTHONIOENCODING = "utf-8"; $env:PYTHONUTF8 = "1"; [Console]::OutputEncoding = [Text.Encoding]::UTF8
 $py = "C:\anaconda3\envs\EnglishWheel\python.exe"; $repo = "$HOME\english-wheel-closed-loop"
@@ -21,6 +24,7 @@ Set-Location "$repo\real_testbed"
 $out = "$repo\loops\$OutName"
 $extra = @(); if ($Resume) { $extra += "--resume" }; if (-not $Confirm) { $extra += "--yes" }; if (-not $AskRadii) { $extra += "--auto-radii" }; if ($Show) { $extra += "--show-preview" }
 if ($Script) { $extra += @("--script", $Script) }
+if ($ManualWheel -ne "off") { $extra += @("--manual-wheel", $ManualWheel) }
 $t0 = Get-Date
 & $py -m ew_loop.cli rigloop --plant dobot --robot-scripts $scripts --server http://localhost:8765 `
     --target "figures/rig/targets/$Target.npz" --out $out --calib "pc_post_processing/deliverable_092826/calibration results" `

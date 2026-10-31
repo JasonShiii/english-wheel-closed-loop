@@ -301,6 +301,9 @@ def main():
     ap.add_argument("--auto-radii", action="store_true", help="no Rx/Rz prompt between passes (keep the current radii)")
     ap.add_argument("--show-preview", action="store_true", help="let his driver open its zigzag preview in the image viewer (desktop session)")
     ap.add_argument("--sheet-json", help="(baseline) the loop's sheet (frames.Sheet.to_dict) for run_info.txt")
+    ap.add_argument("--manual-wheel", choices=["off", "confirm", "auto"], default="off",
+                    help="(run) the operator loads / unloads the wheel by hand, the motor is not used (manual_wheel.py): "
+                         "confirm = ENTER / resume.bat after each, auto = continue once the force is in the window")
     ap.add_argument("--start-direction", choices=["l2r", "r2l"], default="l2r",
                     help="direction of the block's first pass (his driver always starts left->right: r2l hands it the pivots reversed)")
     a = ap.parse_args()
@@ -384,6 +387,14 @@ def main():
             return 0
 
     quiet(zf, wf, a.mode, a.show_preview)
+    mw = None
+    if a.mode == "run" and a.manual_wheel != "off":
+        if wf is None:
+            sys.exit("[run_toolpath_dobot] --manual-wheel needs his wheel_force module (load cell)")
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import manual_wheel
+        mw = manual_wheel.install(zf, wf, a.manual_wheel, log=lambda *x: print(*x, flush=True))
+        print(f"[run_toolpath_dobot] MANUAL WHEEL ({a.manual_wheel}): the operator loads and unloads the wheel; the motor is not used", flush=True)
     block = None
     if a.mode == "run":
         if not a.auto_radii and zf.NUM_PASSES > 1:
@@ -421,6 +432,7 @@ def main():
         res["wheel_load"] = load_stats(run_dir) if run_dir else None
     except Exception as e:                           # noqa: BLE001  the record must never fail the run
         res["wheel_load"] = {"error": f"{type(e).__name__}: {e}"}
+    res["manual_wheel"] = {"mode": a.manual_wheel, "events": mw.events} if mw is not None else None
     res.update({"force_after_unload_N": block.get("force_after_unload_N") if block else None,
                 "output_dir": run_dir, "captures": caps, "passes_done": done, "skipped_between_passes": block["skipped"] if block else [],
                 "ok": not missing and err is None, "error": err, "secs": round(time.time() - t0)})

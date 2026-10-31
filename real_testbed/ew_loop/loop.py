@@ -23,7 +23,7 @@ import shutil
 import subprocess
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Optional
 
 import numpy as np
@@ -300,20 +300,21 @@ class DobotPlant:
     the last one as the block's measurement. Capture index = capture count of the session."""
     ADAPTER = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "robot_dobot", "run_toolpath_dobot.py")
 
-    def __init__(self, scripts, python=None, margin_top=12.0, auto_radii=False, show_preview=False, sheet=None):
+    def __init__(self, scripts, python=None, margin_top=12.0, auto_radii=False, show_preview=False, sheet=None, manual_wheel="off"):
         self.scripts, self.python, self.margin_top, self.auto_radii = os.path.abspath(scripts), python or sys.executable, margin_top, auto_radii
+        self.manual_wheel = manual_wheel                 # off | confirm | auto: the operator loads / unloads by hand (manual_wheel.py)
         self.show_preview, self.sheet, self.k = show_preview, sheet, 0
         self.last_run, self.next_dir = None, "l2r"      # direction of the next block's first pass (alternates over the session)
         if not os.path.exists(os.path.join(self.scripts, "run_zigzag_oldclamps.py")):
             raise FileNotFoundError(f"{self.scripts}: run_zigzag_oldclamps.py not found")
 
-    def _run(self, mode, round_dir, toolpath=None):
-        out = os.path.join(round_dir, "robot"); os.makedirs(out, exist_ok=True)
+    def _run(self, mode, round_dir, toolpath=None, out_name="robot"):
+        out = os.path.join(round_dir, out_name); os.makedirs(out, exist_ok=True)
         cmd = [self.python, self.ADAPTER, mode] + ([toolpath] if toolpath else []) + ["--scripts", self.scripts, "--out", out,
                                                                                       "--margin-top", str(self.margin_top)]
         cmd += (["--auto-radii"] if self.auto_radii else []) + (["--show-preview"] if self.show_preview else [])
         if mode == "run":
-            cmd += ["--start-direction", self.next_dir]
+            cmd += ["--start-direction", self.next_dir] + (["--manual-wheel", self.manual_wheel] if self.manual_wheel != "off" else [])
         if mode == "baseline" and self.sheet is not None:
             sj = os.path.join(out, "sheet.json"); json.dump(self.sheet.to_dict(), open(sj, "w"), indent=1); cmd += ["--sheet-json", sj]
         print("  >>> " + " ".join(f'"{c}"' if " " in c else c for c in cmd), flush=True)
@@ -337,7 +338,7 @@ class DobotPlant:
             res["captures"] = {k: os.path.join(local, os.path.basename(v.rstrip("\\/"))) for k, v in res.get("captures", {}).items()}
             json.dump(res, open(p, "w"), indent=1)
         self.last_run = {k: res.get(k) for k in ("mode", "output_dir", "local_copy", "captures", "passes_done", "ok", "error", "secs",
-                                                 "wheel_load", "force_after_unload_N")}
+                                                 "wheel_load", "force_after_unload_N", "manual_wheel")}
         if not res.get("ok"):
             raise RuntimeError(f"robot {mode} failed: {res.get('error')} (captures {sorted(res.get('captures', {}))}, run folder {res.get('output_dir')})")
         return res
@@ -345,6 +346,14 @@ class DobotPlant:
     def baseline(self, round_dir):
         res = self._run("baseline", round_dir)
         return Capture(None, 0, None, pass_dir=res["captures"]["0"])
+
+    def retake(self, round_dir, k):
+        """one more scan of the current state: scan pose and capture only (baseline mode, ~20 s), in round_NN/robot_retake<k>;
+        the block's own run record (last_run) is kept"""
+        keep = self.last_run
+        res = self._run("baseline", round_dir, out_name=f"robot_retake{k}")
+        self.last_run = keep
+        return res["captures"]["0"]
 
     def execute(self, doc, round_dir):
         res = self._run("run", round_dir, os.path.join(round_dir, "toolpath.json"))
@@ -387,6 +396,41 @@ def _rig_tools():
 def _clean(fld, sheet):
     ME, CL, _, _ = _rig_tools()
     return CL.clean_field(fld, width_mm=sheet.width_mm, crop_y=ME.cfg.crop_y(), y_top=sheet.length_mm / 2)
+
+
+GLARE_HOLE_MM2 = 200.0     # a raw field's largest interior hole above this is a glare dropout (sheet 1, 2026-10-29: normal
+                           # scans <= 16 mm2, the two glare scans 1447 and 2768 mm2)
+
+
+def scan_holes(fld, sheet):
+    """interior holes of a RAW measured field: NaN components that touch neither the side edges (within clean.FILL_EDGE_MM)
+    nor the crop band nor the free edge (clean.py's fill rule), i.e. the dropouts glare leaves inside the sheet"""
+    import scipy.ndimage as nd
+    ME, CL, _, _ = _rig_tools()
+    W, ylo, yhi = sheet.width_mm, ME.cfg.crop_y(), sheet.length_mm / 2
+    X, Y = np.meshgrid(fld.x_mm, fld.y_mm); a = float(abs(fld.x_mm[1] - fld.x_mm[0])) ** 2
+    lab, n = nd.label(~np.isfinite(fld.z_mm) & (Y >= ylo) & (np.abs(X) <= W / 2))
+    sizes = [int(c.sum()) for c in (lab == k for k in range(1, n + 1))
+             if X[c].min() > -W / 2 + CL.FILL_EDGE_MM and X[c].max() < W / 2 - CL.FILL_EDGE_MM and Y[c].min() > ylo + 4 and Y[c].max() < yhi - 4]
+    return {"largest_hole_mm2": round(max(sizes, default=0) * a, 1), "holes_mm2": round(sum(sizes) * a, 1), "coverage": fld.meta.get("coverage_observed")}
+
+
+def _measure_with_retakes(measure, pass_dir, plant, round_dir, sheet, retakes, log, what):
+    """measure(pass_dir) -> raw field; while its largest interior hole exceeds GLARE_HOLE_MM2, scan again at the scan pose
+    (plant.retake, at most `retakes` times: glare comes and goes between scans of the same state, 10-29 21:43 / 21:44).
+    Returns (raw field, pass_dir used, record): the first take without glare, else the take with the smallest hole."""
+    fld = measure(pass_dir); h = scan_holes(fld, sheet)
+    takes, best = [{"pass_dir": pass_dir, **h}], (fld, pass_dir, h)
+    while h["largest_hole_mm2"] > GLARE_HOLE_MM2 and len(takes) <= retakes and hasattr(plant, "retake"):
+        log(f"  {what}: interior hole {h['largest_hole_mm2']:.0f} mm2 > {GLARE_HOLE_MM2:g} mm2 (glare) -> retake {len(takes)}/{retakes}")
+        pass_dir = plant.retake(round_dir, len(takes))
+        fld = measure(pass_dir); h = scan_holes(fld, sheet); takes.append({"pass_dir": pass_dir, **h})
+        if h["largest_hole_mm2"] < best[2]["largest_hole_mm2"]:
+            best = (fld, pass_dir, h)
+    rec = {"ok": best[2]["largest_hole_mm2"] <= GLARE_HOLE_MM2, "threshold_mm2": GLARE_HOLE_MM2, "used": best[1], "takes": takes}
+    if not rec["ok"]:
+        log(f"  WARNING {what}: every take has a glare hole (smallest {best[2]['largest_hole_mm2']:.0f} mm2 after {len(takes)} take(s))")
+    return best[0], best[1], rec
 
 
 def _calib_metrics(fld, sheet):
@@ -513,13 +557,15 @@ def _record(out, rec):
 def run_loop(out, sheet, target_path, planner, plant, n=3, max_passes=30, schema=P.DEFAULT_SCHEMA,
              feed_dir_cam=None, camera=S.DEFAULT_CAMERA, up_toward_camera=True, allow_rot90=False,
              confirm=True, step=2.0, robust=True, resume=False, log=None, measurer=None, profile=None,
-             script=None, allow_no_sheet=False, max_angle=0.0):
+             script=None, allow_no_sheet=False, max_angle=0.0, retakes=2):
     """measurer (measure.RigMeasurer) + profile (model_newsheet.NewsheetModel) = the rig path (2026-10-28):
     captures are folders measured at the scan pose, the planner's plan_fields() takes the fields; the
     fields are cropped and plane-removed by the measurer, so no clamp-band mask is applied here.
     script = [{"wa": {...}, "passes": n}, ...]: no planner and no controller decisions, the blocks run as
     listed (dry runs); everything is still measured and recorded. allow_no_sheet: the flat scan may hold no sheet.
-    max_angle: largest |area angle| executed (schema v8 tilted areas; 0 = refused, spec.check_tilt)."""
+    max_angle: largest |area angle| executed (schema v8 tilted areas; 0 = refused, spec.check_tilt).
+    retakes: scans retaken at most this often when a raw field has a glare hole (_measure_with_retakes); a flat scan that
+    keeps its hole stops the loop (the sheet mask is built from it), a later scan goes on with its best take."""
     log = log or (lambda *a: print(*a, flush=True))
     out = os.path.abspath(out)                     # the plants run tools from other folders
     os.makedirs(out, exist_ok=True)
@@ -552,7 +598,12 @@ def run_loop(out, sheet, target_path, planner, plant, n=3, max_passes=30, schema
         os.makedirs(r0, exist_ok=True)
         base = plant.baseline(r0)
         if rig:
-            cur_raw = measurer.reference(os.path.dirname(base.pass_dir))
+            cur_raw, pdir, flat_check = _measure_with_retakes(lambda d: measurer.reference(os.path.dirname(d)), base.pass_dir, plant, r0,
+                                                              sheet, retakes, log, "flat scan")
+            base = replace(base, pass_dir=pdir)
+            if not flat_check["ok"] and hasattr(plant, "retake") and retakes > 0 and not allow_no_sheet:
+                raise RuntimeError(f"the flat scan keeps a glare hole after {len(flat_check['takes'])} takes ({flat_check['takes']}); the sheet "
+                                   "mask is built from it. Check the lighting / sheet surface and start again.")
             cur = _clean(cur_raw, sheet)
             measurer.save(ref_dir)
             measurer.preview(os.path.join(ref_dir, "reference_preview.png"), cur)
@@ -588,7 +639,7 @@ def run_loop(out, sheet, target_path, planner, plant, n=3, max_passes=30, schema
             _scan_png(os.path.join(r0, "scan_flat.png"), measurer.full_view(None) if hasattr(measurer, "full_view") else None, cur, sheet,
                       f"round 0: flat scan {os.path.dirname(base.pass_dir)}")
             json.dump({"compare_cleaned": _compare(cur, target, robust, allow_no_sheet, log), "calib_raw": _calib_metrics(cur_raw, sheet),
-                       "cleaning": cur.meta.get("cleaning"), "coverage": cur_raw.meta.get("coverage_observed")},
+                       "cleaning": cur.meta.get("cleaning"), "coverage": cur_raw.meta.get("coverage_observed"), "scan_check": flat_check},
                       open(os.path.join(r0, "flat_metrics.json"), "w"), indent=1, default=str)
         state = ST.LoopState(max_passes, robust)
         state.record_initial(_compare(cur, target, robust, allow_no_sheet, log))
@@ -662,7 +713,9 @@ def run_loop(out, sheet, target_path, planner, plant, n=3, max_passes=30, schema
             # cadence of 2026-10-28: the robot runs the whole block, ONE capture at the scan pose; the controller
             # is updated once per block (the block gain split per pass with the 0.8 decay, state.record_block)
             for i, cap in enumerate(caps):
-                fld_raw = measurer.field(cap.pass_dir)
+                fld_raw, pdir, scan_check = _measure_with_retakes(measurer.field, cap.pass_dir, plant, rd, sheet, retakes, log,
+                                                                  f"round {r} capture {cap.pass_index}")
+                cap = replace(cap, pass_dir=pdir)
                 fld = _clean(fld_raw, sheet)          # the planner and the controller get the cleaned field
                 name = os.path.join(rd, f"field_{cap.toolpath_id}_capture{cap.pass_index}")
                 _save_field(fld, name, profile)
@@ -686,7 +739,7 @@ def run_loop(out, sheet, target_path, planner, plant, n=3, max_passes=30, schema
                                         "field_raw": name + "_raw.npz", "cleaning": fld.meta.get("cleaning"), "calib": calib,
                                         "fed_to_planner": fld.meta.get("source"), "real_error": fld.meta.get("real_error"),
                                         "z_min": round(float(fld.zrange()[0]), 2), "z_max": round(float(fld.zrange()[1]), 2),
-                                        "coverage": fld_raw.meta.get("coverage_observed"), **mt})
+                                        "coverage": fld_raw.meta.get("coverage_observed"), "scan_check": scan_check, **mt})
             if not caps:
                 stop_now = f"no capture after round {r}"
             elif executed < k:

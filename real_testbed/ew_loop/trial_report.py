@@ -65,7 +65,9 @@ def scan_table(root, rounds):
             if not m.get("calib"):
                 continue
             done = (rec.get("executed") or rec.get("block_passes") or 0) + done if m.get("block_measurement") else done
-            rows.append((done, f"round {rec['round']} capture {m.get('capture')}", m, m.get("calib") or {}, (rec.get("robot") or {}).get("wheel_load"),
+            nt = len((m.get("scan_check") or {}).get("takes") or [1])
+            rows.append((done, f"round {rec['round']} capture {m.get('capture')}" + (f" ({nt} takes, glare)" if nt > 1 else ""), m, m.get("calib") or {},
+                         (rec.get("robot") or {}).get("wheel_load"),
                          f"{m.get('z_min')}..{m.get('z_max')}"))
     if len(rows) <= 1:
         return []

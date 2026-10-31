@@ -200,7 +200,7 @@ def cmd_rigloop(a):
         plant = L.ReplayPlant(a.replay_run)
     elif a.plant == "dobot":
         plant = L.DobotPlant(a.robot_scripts, python=a.robot_python, margin_top=a.margin_top, auto_radii=a.auto_radii,
-                             show_preview=a.show_preview, sheet=sheet)
+                             show_preview=a.show_preview, sheet=sheet, manual_wheel=a.manual_wheel)
     else:
         plant = L.FilePlant(a.exchange, a.captures)
     measurer = ME.RigMeasurer(calib_dir=a.calib)
@@ -209,7 +209,7 @@ def cmd_rigloop(a):
         print(f"FAKE measurement: the planner and the controller see {a.fake_fields}/field_<passes>.npz; the real scans are saved and measured for the record")
     st = L.run_loop(a.out, sheet, a.target, planner, plant, n=a.n, max_passes=a.max_passes, allow_rot90=False,
                     confirm=not a.yes, robust=True, resume=a.resume, measurer=measurer, profile=profile,
-                    script=script, allow_no_sheet=a.allow_no_sheet, max_angle=a.max_angle)
+                    script=script, allow_no_sheet=a.allow_no_sheet, max_angle=a.max_angle, retakes=a.retakes)
     return 0 if st.reason and st.reason.startswith(("converged", "script_done")) else 3
 
 
@@ -285,11 +285,15 @@ def main(argv=None):
     rl.add_argument("--script", help="JSON list of {wa, passes}: run these blocks as listed, no planner, no controller decisions (dry runs)")
     rl.add_argument("--max-angle", type=float, default=0.0, help="largest |area angle| (deg) executed, schema v8 tilted areas; "
                                                                 "0 = refused. Set only to what Danish has cleared (ROTATION_RANGE_2026-10-29.md)")
+    rl.add_argument("--retakes", type=int, default=2, help="scan again (scan pose only, ~20 s) at most this often when a scan has a "
+                                                            "glare hole inside the sheet (0 = never)")
     rl.add_argument("--allow-no-sheet", action="store_true", help="continue when the flat scan holds no sheet (dry runs without a sheet)")
     rl.add_argument("--fake-fields", help="dry run: folder of field_<c>.npz handed to the planner/controller after c passes, instead of the measured scans")
     rl.add_argument("--plant", choices=["file", "replay", "dobot"], default="file")
     rl.add_argument("--robot-scripts", help="(dobot) Danish's Scripts folder (English-Wheel---DoBot-Files/Scripts)")
     rl.add_argument("--robot-python", help="(dobot) python for his driver (default: this one)")
+    rl.add_argument("--manual-wheel", choices=["off", "confirm", "auto"], default="off",
+                    help="(dobot) the operator loads / unloads the wheel by hand at every block (robot_dobot/manual_wheel.py)")
     rl.add_argument("--auto-radii", action="store_true", help="(dobot) skip his Rx/Rz prompt between passes")
     rl.add_argument("--show-preview", action="store_true", help="(dobot) let his driver open its zigzag preview in the image viewer (desktop)")
     rl.add_argument("--margin-top", type=float, default=12.0, help="robot MARGIN_TOP_MM (far-edge strip the wheel cannot reach)")
