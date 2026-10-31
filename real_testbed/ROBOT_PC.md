@@ -185,3 +185,20 @@ runs his driver from whatever folder it is given. To keep the loop on a version 
 - The J1 inspection rotation he added between passes (2026-10-30, uncommitted) is always skipped by the adapter.
 - To adopt a new version of his: pin it, rehearse it without a sheet, then add its hashes to the JSON.
 - Our own code steps back with git in the clone: `git -C ~\english-wheel-closed-loop checkout <commit>`.
+
+## Tilted areas and the dataset-D planner (schema v8, 2026-10-31)
+
+- The planner of dataset D (`runs/t1.0_D1-5_augreal_visfix_e3/checkpoint-1170`) answers in schema v8: each working area
+  has an `angle` (0, ±15, ±30, ±45, counter-clockwise in the sheet frame), and the zigzag is turned by it about the area
+  centre. When the service runs it (`serve-fields --schema v8`), start the loop with `-Schema v8`. The loop refuses a
+  service whose schema differs from its own.
+- Tilted areas are refused unless `-MaxAngle` covers them. Set it only to what Danish has cleared with the jog check
+  (gripper pads and yoke at the most tilted pose, wheel open). With it, `spec.py` still refuses an area whose centre is
+  outside the per-angle rectangle (ROTATION_RANGE_2026-10-29.md) or whose gripped edge would come within 12 mm of the
+  wheel line.
+- Demo B scripted check, no planner, 4 blocks, one scan per block:
+  `robotpc_loop.ps1 -OutName demoB_D5_t019_scripted -Target D5_t019_c10 -Script figures/rig/scripts/demoB_D5_t019_4blocks.json -MaxAngle 45 -Confirm -Show`.
+  After block 1 (the left area only), check the scan before going on. The bump must be on the LEFT (x ≈ −37). On the
+  right means the robot frame is mirrored (`frames.PLANNER_X_SIGN`): stop.
+- Closed loop with the planner: `robotpc_loop.ps1 -OutName demoB_D5_t019_loop -Target D5_t019_c10 -Schema v8 -MaxAngle 45 -Confirm -Show`
+  (Demo A: `-Target D1_t065_c5` or `D1_t054_c7`, no `-MaxAngle` needed).

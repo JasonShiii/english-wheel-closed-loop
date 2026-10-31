@@ -12,7 +12,8 @@ import sys
 
 
 def _wa(e):
-    return f"({e['cx']:.1f},{e['cy']:.1f}) {e['wx']:.0f}x{e['wy']:.0f} rot {e['rot']} N {e['N']} hits {e['n']}"
+    o = f"rot {e['zz_rot']} angle {e['angle']:+d}" if e.get("angle") else f"rot {e['rot']}"
+    return f"({e['cx']:.1f},{e['cy']:.1f}) {e['wx']:.0f}x{e['wy']:.0f} {o} N {e['N']} hits {e['n']}"
 
 
 def _rel(root, p):
@@ -112,7 +113,8 @@ def main(root, quiet=False):
         rb = tp.get("robot") or {}
         dirs = " ".join("L>R" if d == "l2r" else "R>L" for d in (tp.get("pass_directions") or []))
         tp_txt = (f"{tp.get('id')} x{tp.get('passes')} [{dirs}]: N {rb.get('zigzag_N')}, lv {rb.get('zigzag_lv_mm')}, alpha {rb.get('zigzag_alpha_deg')}, "
-                  f"cx {rb.get('center_x_mm')}, start {rb.get('start_mm')}, {tp.get('n_pivots')} pivots") if tp else "(none)"
+                  f"cx {rb.get('center_x_mm')}, start {rb.get('start_mm')}, " + (f"rotation {rb['rotation_deg']}, " if rb.get("rotation_deg") else "")
+                  + f"{tp.get('n_pivots')} pivots") if tp else "(none)"
         ro = rec.get("robot") or {}
         ro_txt = (f"`{ntpath.basename(str(ro.get('output_dir') or '').rstrip(chr(92) + '/'))}` captures {sorted(ro.get('captures', {}))}"
                   + (f" {ro.get('secs')} s" if ro.get("secs") else "")) if ro else "(none)"

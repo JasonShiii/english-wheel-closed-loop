@@ -464,7 +464,7 @@ def _replan_png(rd, rec, doc, cur, target):
     plan = rec.get("plan") or []
     lines.append("plan" + (" (scripted)" if rec.get("scripted") else f" from the model ({rec.get('model_secs')} s)") + ":")
     for i, e in enumerate(plan):
-        lines.append(f"   {'>' if i == 0 else ' '} ({e['cx']:.1f}, {e['cy']:.1f}) {e['wx']:.0f} x {e['wy']:.0f} mm, rot {e['rot']}, N {e['N']}, hits {e['n']}")
+        lines.append(f"   {'>' if i == 0 else ' '} ({e['cx']:.1f}, {e['cy']:.1f}) {e['wx']:.0f} x {e['wy']:.0f} mm, {spec.orient_txt(e)}, N {e['N']}, hits {e['n']}")
     lines.append(f"controller: {rec.get('block_passes')} pass(es)  [{rec.get('block_reason', '')}]")
     for tp in doc["toolpaths"]:
         rb = tp["robot"]; dirs = tp.get("pass_directions") or []
@@ -513,12 +513,13 @@ def _record(out, rec):
 def run_loop(out, sheet, target_path, planner, plant, n=3, max_passes=30, schema=P.DEFAULT_SCHEMA,
              feed_dir_cam=None, camera=S.DEFAULT_CAMERA, up_toward_camera=True, allow_rot90=False,
              confirm=True, step=2.0, robust=True, resume=False, log=None, measurer=None, profile=None,
-             script=None, allow_no_sheet=False):
+             script=None, allow_no_sheet=False, max_angle=0.0):
     """measurer (measure.RigMeasurer) + profile (model_newsheet.NewsheetModel) = the rig path (2026-10-28):
     captures are folders measured at the scan pose, the planner's plan_fields() takes the fields; the
     fields are cropped and plane-removed by the measurer, so no clamp-band mask is applied here.
     script = [{"wa": {...}, "passes": n}, ...]: no planner and no controller decisions, the blocks run as
-    listed (dry runs); everything is still measured and recorded. allow_no_sheet: the flat scan may hold no sheet."""
+    listed (dry runs); everything is still measured and recorded. allow_no_sheet: the flat scan may hold no sheet.
+    max_angle: largest |area angle| executed (schema v8 tilted areas; 0 = refused, spec.check_tilt)."""
     log = log or (lambda *a: print(*a, flush=True))
     out = os.path.abspath(out)                     # the plants run tools from other folders
     os.makedirs(out, exist_ok=True)
@@ -605,7 +606,7 @@ def run_loop(out, sheet, target_path, planner, plant, n=3, max_passes=30, schema
         if script is not None:
             os.makedirs(rd, exist_ok=True)
             entry = script[r - 1]
-            first = {**entry["wa"], "n": int(entry["passes"])}
+            first = spec.normalise_wa({**entry["wa"], "n": int(entry["passes"])})   # {rot 0 / 90, angle} -> read_entry's keys
             res = {"was": [first], "plan": None, "secs": 0.0, "scripted": True}
             if profile is not None:
                 profile.render(cur, os.path.join(rd, "cur.png")); profile.render(target, os.path.join(rd, "tgt.png"))
@@ -628,7 +629,7 @@ def run_loop(out, sheet, target_path, planner, plant, n=3, max_passes=30, schema
         if k == 0:
             state.stopped, state.reason = True, "next_pass_would_overshoot"
             _save_round(out, rd, {**rec, "stop": state.reason}, "stopped before execution"); _record(out, {**rec, "stop": state.reason}); break
-        tps, problems = spec.plan_to_toolpaths([{**first, "n": k}], sheet, allow_rot90=allow_rot90)
+        tps, problems = spec.plan_to_toolpaths([{**first, "n": k}], sheet, allow_rot90=allow_rot90, max_angle=max_angle)
         if problems:
             state.stopped, state.reason = True, f"not_executable: {problems[0][1]}"
             _save_round(out, rd, {**rec, "stop": state.reason}, "stopped before execution"); _record(out, {**rec, "stop": state.reason}); break
@@ -644,7 +645,7 @@ def run_loop(out, sheet, target_path, planner, plant, n=3, max_passes=30, schema
         _save_round(out, rd, rec, "planned: toolpath.json, preview.png and replan.png written; not executed yet")
         m = state.scans[-1]
         log(f"round {r}: amp {m['amp_ratio']:.3f}, corr {m['pattern_corr']:.4f} -> {k} pass(es) of "
-            f"WA ({first['cx']:.0f},{first['cy']:.0f}) {first['wx']:.0f}x{first['wy']:.0f} rot {first['rot']} N {first['N']}, "
+            f"WA ({first['cx']:.0f},{first['cy']:.0f}) {first['wx']:.0f}x{first['wy']:.0f} {spec.orient_txt(first)} N {first['N']}, "
             f"passes {' '.join('L>R' if d == 'l2r' else 'R>L' for d in tps[0]['pass_directions'])}  [{getattr(state, 'block_reason', '')}]")
         if confirm and input(f"  execute round {r} ({rd}/preview.png)? [y/N] ").strip().lower() != "y":
             state.stopped, state.reason = True, "stopped_by_operator"

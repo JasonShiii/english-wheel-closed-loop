@@ -65,7 +65,7 @@ CLOSED_REASONING = "max"        # 2026-10-20 decision: each model at ITS maximum
 # (max/xhigh = 0.95 x max_tokens, capped at 128k); Gemini 3/4 map xhigh down to "high" (their highest thinkingLevel).
 MAX_EFFORT = {"openai/": "xhigh", "anthropic/": "max", "google/": "high"}
 SAMPLE_TEMPERATURE = 0.7        # the one sampled retry (mpc_rollout.generate)
-SCHEMAS = ("v5facts", "v5", "v6lean", "v1", "v1facts", "v2")
+SCHEMAS = ("v5facts", "v5", "v6lean", "v1", "v1facts", "v2", "v8")   # v8 = the final dataset scheme (2026-10-30): wa.angle + zigzag rot 0 / 90, no g
 SCHEMA_DEFAULT = "v5facts"      # the new pipeline's prompt (pairs.PROMPT_V5 + the facts of <data>/facts.json)
 
 # ---- data location (set once per run by configure) --------------------------------------------
@@ -141,15 +141,17 @@ def facts_text(schema=SCHEMA_DEFAULT):
         from common import PROCESS_FACTS
         return [PROCESS_FACTS]
     fp = DATA / "facts.json"
-    return json.load(open(fp))["facts"] if schema == "v5facts" and fp.exists() else None
+    return json.load(open(fp))["facts"] if schema in ("v5facts", "v8") and fp.exists() else None
 
 
 def build_prompt(cz, tz, history, schema=SCHEMA_DEFAULT):
     """plan()'s prompt: the training prompt of the schema. v5 / v5facts = newsheet_pipeline/pairs.build_prompt
     (sheet, reachable zone and facts from cfg and <data>/facts.json); v1 / v1facts / v2 = mpc_end2end/common."""
-    if schema in ("v5", "v5facts"):
-        import pairs as NP                          # newsheet_pipeline/pairs.py (its FACTS_TEXT is the module state pairs.py sets)
+    if schema in ("v5", "v5facts", "v8"):
+        import pairs as NP                          # newsheet_pipeline/pairs.py (its FACTS_TEXT / SCHEMA are the module state pairs.py sets)
         NP.FACTS_TEXT = facts_text(schema)
+        NP.SCHEMA, NP.GROWTH_LINE = ("v8", False) if schema == "v8" else ("v5", True)
+        if schema == "v8": assert NP.FACTS_TEXT, f"schema v8 needs {DATA / 'facts.json'}"
         return NP.build_prompt(cz, tz, history)
     if schema == "v6lean":                          # pairs_to_lean.py's request-only prompt (runs/free_clean_leanpv_e8)
         import pairs as NP

@@ -37,13 +37,14 @@ DEFAULT_DATA = os.path.join(NEWSHEET, "data_231x174_free_g9e-4")
 DEFAULT_CKPT = os.path.join(NEWSHEET, "runs", "free_aug_visfix_e8", "checkpoint-1832")   # handoff 2026-10-29 14:45: vision LoRA
 # trained (scan-like flat inputs 10/24 in band vs 6/24 for free_aug_e8); same prompt / schema. Never the clean checkpoint on real scans.
 SCHEMA = "v5facts"
+SCHEMAS = ("v5facts", "v8")    # v8 (dataset D, 2026-10-30): wa.angle + zigzag rot 0 / 90, no growth line; needs <data>/facts.json
 
 
 class NewsheetModel:
-    name = "newsheet-v5facts"
-
-    def __init__(self, pairs=DEFAULT_PAIRS, data=DEFAULT_DATA):
-        self.pairs, self.data = pairs, data
+    def __init__(self, pairs=DEFAULT_PAIRS, data=DEFAULT_DATA, schema=SCHEMA):
+        assert schema in SCHEMAS, schema
+        self.pairs, self.data, self.schema = pairs, data, schema
+        self.name = f"newsheet-{schema}"             # the robot side and serve-fields must use the same schema
         self._configured = False
 
     def _pl(self):
@@ -56,18 +57,18 @@ class NewsheetModel:
         return R.field_png(field, path)
 
     def build_prompt(self, cz, tz, history):
-        return self._pl().build_prompt(cz, tz, history, schema=SCHEMA)
+        return self._pl().build_prompt(cz, tz, history, schema=self.schema)
 
-    @staticmethod
-    def history(ops):
-        """executed ops (wa dicts with n) -> the prompt's history list; consecutive identical
-        area+zigzag entries are merged, hits_done accumulated."""
+    def history(self, ops):
+        """executed ops (wa dicts with n) -> the prompt's history list (pairs.label_schema: v2 entries for v5facts, v8
+        entries with the area's angle for v8); consecutive identical area+zigzag entries are merged, hits_done accumulated."""
+        hs = "v8" if self.schema == "v8" else "v2"
         out = []
         for wa in ops:
-            if out and out[-1]["wa"] == wa_desc(wa) and out[-1]["zigzag"] == zz_desc(wa):
+            if out and out[-1]["wa"] == wa_desc(wa, hs) and out[-1]["zigzag"] == zz_desc(wa, hs):
                 out[-1]["hits_done"] += int(wa["n"])
             else:
-                out.append(entry_desc(wa, int(wa["n"]), "hits_done", "v2"))
+                out.append(entry_desc(wa, int(wa["n"]), "hits_done", hs))
         return out
 
     def executable(self, plan):

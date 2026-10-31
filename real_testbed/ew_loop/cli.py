@@ -181,7 +181,7 @@ def cmd_rigloop(a):
     """the automatic loop on the rig setup of 2026-10-28 (231 x 174 x 0.6 sheet, scan-pose captures,
     new-sheet model): measurement = measure.RigMeasurer, model profile = model_newsheet.NewsheetModel."""
     from . import loop as L, measure as ME, model_newsheet as MN
-    profile = MN.NewsheetModel(pairs=a.pairs or MN.DEFAULT_PAIRS, data=a.data or MN.DEFAULT_DATA)
+    profile = MN.NewsheetModel(pairs=a.pairs or MN.DEFAULT_PAIRS, data=a.data or MN.DEFAULT_DATA, schema=a.schema)
     sheet = Sheet(width_mm=231.0, length_mm=174.0, thickness_mm=a.thickness, clamp_mm=a.clamp, margin_side_mm=a.margin_side,
                   margin_bottom_mm=0.0, margin_top_mm=a.margin_top, pad_offsets_from_left_mm=(6.5, 224.5), pad_diameter_mm=13.0)
     script = None
@@ -191,7 +191,9 @@ def cmd_rigloop(a):
     elif a.fixed_plan:
         planner = P.FixedFieldsPlanner(a.fixed_plan, profile)
     elif a.server:
-        planner = P.HttpFieldsPlanner(a.server); print("server:", planner.health())
+        planner = P.HttpFieldsPlanner(a.server); h = planner.health(); print("server:", h)
+        if h.get("profile") != profile.name:              # the history is written here, the prompt there: one schema
+            sys.exit(f"the server runs profile {h.get('profile')}, this loop writes {profile.name} history (--schema)")
     else:
         planner = P.ModelPlanner(a.ckpt or MN.DEFAULT_CKPT, profile); print(f"model loaded in {planner.load_secs:.0f}s")
     if a.plant == "replay":
@@ -207,13 +209,13 @@ def cmd_rigloop(a):
         print(f"FAKE measurement: the planner and the controller see {a.fake_fields}/field_<passes>.npz; the real scans are saved and measured for the record")
     st = L.run_loop(a.out, sheet, a.target, planner, plant, n=a.n, max_passes=a.max_passes, allow_rot90=False,
                     confirm=not a.yes, robust=True, resume=a.resume, measurer=measurer, profile=profile,
-                    script=script, allow_no_sheet=a.allow_no_sheet)
+                    script=script, allow_no_sheet=a.allow_no_sheet, max_angle=a.max_angle)
     return 0 if st.reason and st.reason.startswith(("converged", "script_done")) else 3
 
 
 def cmd_serve_fields(a):
     from . import model_newsheet as MN
-    profile = MN.NewsheetModel(pairs=a.pairs or MN.DEFAULT_PAIRS, data=a.data or MN.DEFAULT_DATA)
+    profile = MN.NewsheetModel(pairs=a.pairs or MN.DEFAULT_PAIRS, data=a.data or MN.DEFAULT_DATA, schema=a.schema)
     P.serve_fields(a.ckpt or MN.DEFAULT_CKPT, profile, host=a.host, port=a.port)
 
 
@@ -281,6 +283,8 @@ def main(argv=None):
     rl.add_argument("--ckpt", help="new-sheet checkpoint (default: free_aug_visfix_e8/checkpoint-1832)"); rl.add_argument("--server", help="URL of `serve-fields`")
     rl.add_argument("--fixed-plan", help="plan JSON instead of a model")
     rl.add_argument("--script", help="JSON list of {wa, passes}: run these blocks as listed, no planner, no controller decisions (dry runs)")
+    rl.add_argument("--max-angle", type=float, default=0.0, help="largest |area angle| (deg) executed, schema v8 tilted areas; "
+                                                                "0 = refused. Set only to what Danish has cleared (ROTATION_RANGE_2026-10-29.md)")
     rl.add_argument("--allow-no-sheet", action="store_true", help="continue when the flat scan holds no sheet (dry runs without a sheet)")
     rl.add_argument("--fake-fields", help="dry run: folder of field_<c>.npz handed to the planner/controller after c passes, instead of the measured scans")
     rl.add_argument("--plant", choices=["file", "replay", "dobot"], default="file")
@@ -299,13 +303,17 @@ def main(argv=None):
                                                                  "the model's prompt keeps the text it was trained with)")
     rl.add_argument("--margin-side", type=float, default=43.4, help="robot MARGIN_SIDE_MM (43.4 = the model's reachable zone, x within +-72.1)")
     rl.add_argument("--pairs"); rl.add_argument("--data")
+    rl.add_argument("--schema", default="v5facts", choices=("v5facts", "v8"), help="the model's prompt schema (v8: tilted areas); "
+                                                                                    "must match serve-fields --schema")
     rl.add_argument("--n", type=int, default=3, help="most passes per block before re-planning")
     rl.add_argument("--max-passes", type=int, default=12); rl.add_argument("--yes", action="store_true"); rl.add_argument("--resume", action="store_true")
     rl.set_defaults(f=cmd_rigloop)
 
     sf = sub.add_parser("serve-fields", help="model service for rigloop --server: takes height fields, returns the plan")
     sf.add_argument("--ckpt"); sf.add_argument("--host", default="0.0.0.0"); sf.add_argument("--port", type=int, default=8765)
-    sf.add_argument("--pairs"); sf.add_argument("--data"); sf.set_defaults(f=cmd_serve_fields)
+    sf.add_argument("--pairs"); sf.add_argument("--data")
+    sf.add_argument("--schema", default="v5facts", choices=("v5facts", "v8"), help="prompt schema of the checkpoint (v8 needs <data>/facts.json)")
+    sf.set_defaults(f=cmd_serve_fields)
 
     a = ap.parse_args(argv)
     if a.cmd == "plan" and not (a.ckpt or a.server):

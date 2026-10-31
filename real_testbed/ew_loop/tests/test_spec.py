@@ -99,6 +99,40 @@ def test_json_roundtrip_and_preview():
     print("[ok] toolpath.json round trip + preview; odd N accepted (N=5)")
 
 
+def test_tilted():
+    """schema v8 areas tilted by theta (2026-10-30): refused by default; with max_angle the pivots are the theta = 0
+    zigzag turned about the area centre (CCW in the sheet frame, theta > 0 = legs' upper end toward -x), checked
+    against the per-angle centre rectangle and the gripped-edge clearance"""
+    from ew_loop.model_io import read_entry
+    sheet = Sheet(width_mm=231.0, length_mm=174.0, thickness_mm=1.0, clamp_mm=12.0, margin_side_mm=43.4, margin_bottom_mm=0.0,
+                  margin_top_mm=12.0, pad_offsets_from_left_mm=(6.5, 224.5), pad_diameter_mm=13.0)
+    e = lambda cx, cy, th, rot=0: read_entry({"wa": {"center_xy": [cx, cy], "size_wh": [50, 45], "angle": th}, "zigzag": {"rot": rot, "N": 12}, "hits": 2})
+    for kw, wa in (({}, e(-40, 10, 30)), ({"max_angle": 30}, e(-40, 10, 45)), ({"max_angle": 45, "allow_rot90": True}, e(0, 0, 30, 90)),
+                   ({"max_angle": 45}, e(45, 0, 45)), ({"max_angle": 45}, e(0, -25, 45))):
+        try:
+            spec.wa_to_toolpath(wa, sheet, **kw); raise AssertionError(f"accepted {wa} {kw}")
+        except spec.Infeasible:
+            pass
+    for th in (15, -15, 30, -30, 45, -45):
+        wa = e(-40, 10, th)
+        tp = spec.wa_to_toolpath(wa, sheet, max_angle=45)
+        flat = spec.wa_pivots_sheet({**wa, "rot": 0, "zz_rot": 0, "angle": 0}) - [wa["cx"], wa["cy"]]
+        t = np.radians(th); R = np.array([[np.cos(t), -np.sin(t)], [np.sin(t), np.cos(t)]])
+        assert np.allclose(sheet.from_planner(np.array(tp["pivots_xy_mm"]))[::-1], flat @ R.T + [wa["cx"], wa["cy"]], atol=1e-3)
+        assert tp["robot"]["rotation_deg"] == th and (tp["ours"]["zz_rot"], tp["ours"]["angle"]) == (0, th)
+        assert tp["checks"]["gripped_edge_clearance_mm"] >= spec.EDGE_CLEARANCE_MM
+    leg = spec.wa_pivots_sheet(e(0, 0, 30))[1] - spec.wa_pivots_sheet(e(0, 0, 30))[0]
+    assert leg[0] < 0 < leg[1]
+    s = spec.normalise_wa({"cx": -40, "cy": 10, "wx": 50, "wy": 45, "rot": 0, "angle": 45, "N": 12, "n": 2})   # a scripted block
+    assert (s["rot"], s["zz_rot"], s["angle"]) == (45, 0, 45) and spec.normalise_wa(s) == s
+    assert spec.wa_to_toolpath(s, sheet, max_angle=45)["pivots_xy_mm"] == spec.wa_to_toolpath(e(-40, 10, 45), sheet, max_angle=45)["pivots_xy_mm"]
+    with tempfile.TemporaryDirectory() as d:
+        doc = spec.toolpath_doc(sheet, [spec.set_directions(spec.wa_to_toolpath(e(-40, 10, 45), sheet, max_angle=45), "l2r")])
+        spec.preview_png(doc, os.path.join(d, "preview.png"))
+    print("[ok] tilted areas: refused by default / outside the centre rectangle / with rot 90; pivots = the turned zigzag; "
+          "scripted {rot, angle} == read_entry v8")
+
+
 if __name__ == "__main__":
-    test_matches_robot_planner(); test_x_offset(); test_infeasible(); test_json_roundtrip_and_preview()
+    test_matches_robot_planner(); test_x_offset(); test_infeasible(); test_json_roundtrip_and_preview(); test_tilted()
     print("ALL SPEC TESTS PASSED")

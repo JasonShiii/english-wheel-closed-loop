@@ -20,16 +20,35 @@ import numpy as np
 # ---- prompt and plan schema (experiments/mpc_end2end/common.py) -------------------------
 
 
-def wa_desc(wa):
-    """WA = working area GEOMETRY only (schema v2, 2026-08-28)."""
-    return {"center_xy": [wa["cx"], wa["cy"]], "size_wh": [wa["wx"], wa["wy"]]}
+def rot_angle(wa):
+    """(zigzag rot 0 / 90, working-area angle theta) of a working area (experiments/mpc_end2end/common.rot_angle): schema
+    v8 records carry both ('rot' 0 / 90, 'angle_deg'); otherwise the combined rot_deg = rot + theta is split by
+    k = round(rot_deg / 90): rot = 90 if k is odd else 0, theta = rot_deg - 90 k."""
+    if "zz_rot" in wa and "angle_deg" in wa:                  # dataset D records: rot = the combined rotation
+        return int(wa["zz_rot"]), int(round(float(wa["angle_deg"])))
+    if "angle_deg" in wa and int(wa["rot"]) in (0, 90):
+        return int(wa["rot"]), int(round(float(wa["angle_deg"])))
+    rd = float(wa["rot_deg"] if "rot_deg" in wa else wa["rot"]); k = int(round(rd / 90.0))
+    return (90 if k % 2 else 0), int(round(rd - 90.0 * k))
+
+
+def wa_desc(wa, schema=None):
+    """WA = working area GEOMETRY only (schema v2, 2026-08-28). Schema v8 (2026-10-30): plus 'angle', the area's rotation
+    about its centre in integer degrees (CCW in the sheet frame)."""
+    d = {"center_xy": [wa["cx"], wa["cy"]], "size_wh": [wa["wx"], wa["wy"]]}
+    if schema == "v8":
+        d["angle"] = rot_angle(wa)[1]
+    return d
 
 
 def zz_desc(wa, schema=None):
     """zigzag parameters, separated from the WA geometry (schema v2). Schema v7 (2026-10-30, continuous angle): the
-    orientation is 'rot_deg' in integer degrees (CCW in the sheet frame; 0 and 90 are the old rot values)."""
+    orientation is 'rot_deg' in integer degrees (CCW in the sheet frame; 0 and 90 are the old rot values). Schema v8:
+    'rot' 0 / 90 again, the tilt is the area's 'angle'."""
     if schema == "v7":
         return {"rot_deg": int(round(float(wa["rot_deg"] if "rot_deg" in wa else wa["rot"]))), "N": wa["N"]}
+    if schema == "v8":
+        return {"rot": rot_angle(wa)[0], "N": wa["N"]}
     return {"rot": wa["rot"], "N": wa["N"]}
 
 
@@ -39,18 +58,20 @@ SCHEMA_DEFAULT = 'v2'
 def entry_desc(wa, n, key="hits", schema=SCHEMA_DEFAULT):
     if schema == "v1":
         return {"wa": {**wa_desc(wa), **zz_desc(wa)}, key: n}
-    return {"wa": wa_desc(wa), "zigzag": zz_desc(wa, schema), key: n}
+    return {"wa": wa_desc(wa, schema), "zigzag": zz_desc(wa, schema), key: n}
 
 
 def read_entry(e):
-    """Tolerant reader: accepts schema v2 {wa:{geometry}, zigzag:{rot,N}, hits}
-    AND legacy v1 {wa:{geometry, rot, N}, hits}. Returns a flat dict."""
+    """Tolerant reader: accepts schema v2 {wa:{geometry}, zigzag:{rot,N}, hits}, legacy v1 {wa:{geometry, rot, N}, hits},
+    schema v7 {zigzag:{rot_deg,N}} and schema v8 {wa:{geometry, angle}, zigzag:{rot,N}}. Returns a flat dict whose 'rot'
+    and 'rot_deg' hold the simulator / driver rotation in degrees (v8: rot + angle), plus 'zz_rot' and 'angle'."""
     wa = e["wa"]
     zz = e.get("zigzag", wa)
-    rot = int(round(float(zz["rot_deg"] if "rot_deg" in zz else zz["rot"])))      # schema v7 'rot_deg' or the old 'rot' (0 / 90)
+    rot = int(round(float(zz["rot_deg"] if "rot_deg" in zz else zz["rot"])))      # schema v7 'rot_deg' or the 'rot' (0 / 90)
+    angle = int(round(float(wa.get("angle", 0))))                                    # schema v8: the area's tilt
     return dict(cx=float(wa["center_xy"][0]), cy=float(wa["center_xy"][1]),
                 wx=float(wa["size_wh"][0]), wy=float(wa["size_wh"][1]),
-                rot=rot, rot_deg=rot, N=int(zz["N"]),
+                rot=rot + angle, rot_deg=rot + angle, zz_rot=rot, angle=angle, N=int(zz["N"]),
                 n=int(e.get("hits", e.get("hits_done", 0))))
 
 
@@ -109,7 +130,9 @@ W = 10.0            # strip (wheel contact) width used by the data generation, m
 
 
 def strip_stack_dims(wx, wy, rot):
-    return (wy, wx) if rot == 0 else (wx, wy)
+    """(leg side, stacking side) of the box; any angle (2026-10-30, as category_tests): legs follow the box's y side
+    when round(rot / 90) is even, its x side when odd"""
+    return (wy, wx) if int(round(float(rot) / 90.0)) % 2 == 0 else (wx, wy)
 
 
 def inscribe(wx, wy, rot, N):
