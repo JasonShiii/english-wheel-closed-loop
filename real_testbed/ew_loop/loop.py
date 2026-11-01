@@ -433,6 +433,25 @@ def _measure_with_retakes(measure, pass_dir, plant, round_dir, sheet, retakes, l
     return best[0], best[1], rec
 
 
+def _gate(rd, r, log, poll=2.0):
+    """step mode (2026-11-01): wait for the operator's decision on this round's proposal, the file round_NN/decision.json
+    (written over ssh): {"action": "execute"} | {"action": "execute", "passes": k} | {"action": "replace", "wa": {cx, cy, wx,
+    wy, rot, angle, N}, "passes": k} | {"action": "stop"}. Each decision is kept as round_NN/decision_<i>.json."""
+    p = os.path.join(rd, "decision.json")
+    log(f"[gate] round {r}: waiting for the operator's decision ({p})")
+    while True:
+        if os.path.exists(p):
+            try:
+                d = json.load(open(p))
+            except (ValueError, OSError):                    # still being written
+                time.sleep(0.5); continue
+            i = len(glob.glob(os.path.join(rd, "decision_*.json"))) + 1
+            os.replace(p, os.path.join(rd, f"decision_{i}.json"))
+            log(f"[gate] round {r}: decision {i}: {json.dumps(d)}")
+            return d
+        time.sleep(poll)
+
+
 def _calib_metrics(fld, sheet):
     """the per-scan calibration numbers on the RAW field (the fits average the noise out): sagitta across x over a
     200 mm chord (quadratic over |y| < 10, |x| < 100), the zone curvature kxx and its radius, the principal-curvature
@@ -557,7 +576,7 @@ def _record(out, rec):
 def run_loop(out, sheet, target_path, planner, plant, n=3, max_passes=30, schema=P.DEFAULT_SCHEMA,
              feed_dir_cam=None, camera=S.DEFAULT_CAMERA, up_toward_camera=True, allow_rot90=False,
              confirm=True, step=2.0, robust=True, resume=False, log=None, measurer=None, profile=None,
-             script=None, allow_no_sheet=False, max_angle=0.0, retakes=2):
+             script=None, allow_no_sheet=False, max_angle=0.0, retakes=2, gate=False):
     """measurer (measure.RigMeasurer) + profile (model_newsheet.NewsheetModel) = the rig path (2026-10-28):
     captures are folders measured at the scan pose, the planner's plan_fields() takes the fields; the
     fields are cropped and plane-removed by the measurer, so no clamp-band mask is applied here.
@@ -565,7 +584,9 @@ def run_loop(out, sheet, target_path, planner, plant, n=3, max_passes=30, schema
     listed (dry runs); everything is still measured and recorded. allow_no_sheet: the flat scan may hold no sheet.
     max_angle: largest |area angle| executed (schema v8 tilted areas; 0 = refused, spec.check_tilt).
     retakes: scans retaken at most this often when a raw field has a glare hole (_measure_with_retakes); a flat scan that
-    keeps its hole stops the loop (the sheet mask is built from it), a later scan goes on with its best take."""
+    keeps its hole stops the loop (the sheet mask is built from it), a later scan goes on with its best take.
+    gate: step mode, every round's proposal (plan + controller, or the controller's stop) waits for the operator's decision
+    (_gate): execute it, change its passes, replace it by another block, or stop; a changed block is shown again first."""
     log = log or (lambda *a: print(*a, flush=True))
     out = os.path.abspath(out)                     # the plants run tools from other folders
     os.makedirs(out, exist_ok=True)
@@ -647,12 +668,15 @@ def run_loop(out, sheet, target_path, planner, plant, n=3, max_passes=30, schema
     last_field = os.path.join(out, "round_00", "field_reference.npz") if not resume else saved["last_field"]
     r = first_round
     while True:
+        ctrl_stop = None
         if script is not None:
             if r - 1 >= len(script):
                 state.stopped, state.reason = True, "script_done"; break
             state.replans.append(state.scans[-1])                         # metrics logged, no stop rule
         elif state.check_stop():
-            break
+            if not gate:
+                break
+            ctrl_stop, state.stopped, state.reason = state.reason, False, None   # step mode: the operator decides
         rd = os.path.join(out, f"round_{r:02d}")
         if script is not None:
             os.makedirs(rd, exist_ok=True)
@@ -668,40 +692,73 @@ def run_loop(out, sheet, target_path, planner, plant, n=3, max_passes=30, schema
         rec = {"round": r, "time": time.strftime("%Y-%m-%d %H:%M:%S"), "before": state.scans[-1], "plan": res.get("was"),
                "plan_raw": res.get("plan"), "model_secs": res.get("secs"), "sampled": res.get("sampled"), "history_given": state.history[:],
                "scripted": script is not None}
-        if res["was"] is None:
-            state.stopped, state.reason = True, "plan_failure"
-            _save_round(out, rd, {**rec, "stop": state.reason}, "stopped before execution"); _record(out, {**rec, "stop": state.reason}); break
-        first = res["was"][0]
-        if script is not None:
+        first = res["was"][0] if res["was"] else None
+        if first is None:
+            k = 0; state.block_reason = "no executable plan from the model"
+        elif script is not None:
             k = int(first["n"]); state.block_reason = f"scripted: {k} pass(es) as listed (no controller decision)"
         else:
             k = state.block_size(first, n)
         rec.update({"chosen": first, "block_passes": k, "block_reason": getattr(state, "block_reason", "")})
-        if k == 0:
-            state.stopped, state.reason = True, "next_pass_would_overshoot"
-            _save_round(out, rd, {**rec, "stop": state.reason}, "stopped before execution"); _record(out, {**rec, "stop": state.reason}); break
-        tps, problems = spec.plan_to_toolpaths([{**first, "n": k}], sheet, allow_rot90=allow_rot90, max_angle=max_angle)
-        if problems:
-            state.stopped, state.reason = True, f"not_executable: {problems[0][1]}"
-            _save_round(out, rd, {**rec, "stop": state.reason}, "stopped before execution"); _record(out, {**rec, "stop": state.reason}); break
-        spec.set_directions(tps[0], getattr(plant, "next_dir", "l2r"))
-        rec["toolpath"] = {"id": tps[0]["id"], "passes": k, "robot": tps[0]["robot"], "ours": tps[0].get("ours"),
-                           "start_direction": tps[0]["start_direction"], "pass_directions": tps[0]["pass_directions"],
-                           "n_pivots": len(tps[0]["pivots_xy_mm"]), "pivots_xy_mm": tps[0]["pivots_xy_mm"]}
-        doc = spec.toolpath_doc(sheet, tps, note=f"round {r}: {'scripted block' if script is not None else 'first entry of the model plan'}, {k} pass(es), "
-                                                 f"pass 1 {tps[0]['start_direction']}")
-        spec.write_toolpath_json(os.path.join(rd, "toolpath.json"), doc)
-        spec.preview_png(doc, os.path.join(rd, "preview.png"))
-        _replan_png(rd, rec, doc, cur, target)
-        _save_round(out, rd, rec, "planned: toolpath.json, preview.png and replan.png written; not executed yet")
-        m = state.scans[-1]
-        log(f"round {r}: amp {m['amp_ratio']:.3f}, corr {m['pattern_corr']:.4f} -> {k} pass(es) of "
-            f"WA ({first['cx']:.0f},{first['cy']:.0f}) {first['wx']:.0f}x{first['wy']:.0f} {spec.orient_txt(first)} N {first['N']}, "
-            f"passes {' '.join('L>R' if d == 'l2r' else 'R>L' for d in tps[0]['pass_directions'])}  [{getattr(state, 'block_reason', '')}]")
-        if confirm and input(f"  execute round {r} ({rd}/preview.png)? [y/N] ").strip().lower() != "y":
-            state.stopped, state.reason = True, "stopped_by_operator"
-            _save_round(out, rd, {**rec, "stop": state.reason}, "not executed (operator)")
-            _record(out, {**rec, "stop": state.reason}); break
+        if gate:
+            rec["controller_stop"] = ctrl_stop
+        decisions, go = [], False
+        while True:                                   # the proposal; in step mode shown again after every change by the operator
+            problem = "plan_failure" if first is None else ("next_pass_would_overshoot" if k == 0 else None)
+            if problem is None:
+                tps, problems = spec.plan_to_toolpaths([{**first, "n": k}], sheet, allow_rot90=allow_rot90, max_angle=max_angle)
+                if problems:
+                    problem = f"not_executable: {problems[0][1]}"
+            if problem is None:
+                spec.set_directions(tps[0], getattr(plant, "next_dir", "l2r"))
+                rec["toolpath"] = {"id": tps[0]["id"], "passes": k, "robot": tps[0]["robot"], "ours": tps[0].get("ours"),
+                                   "start_direction": tps[0]["start_direction"], "pass_directions": tps[0]["pass_directions"],
+                                   "n_pivots": len(tps[0]["pivots_xy_mm"]), "pivots_xy_mm": tps[0]["pivots_xy_mm"]}
+                src = "operator's block" if decisions else ("scripted block" if script is not None else "first entry of the model plan")
+                doc = spec.toolpath_doc(sheet, tps, note=f"round {r}: {src}, {k} pass(es), pass 1 {tps[0]['start_direction']}")
+                spec.write_toolpath_json(os.path.join(rd, "toolpath.json"), doc)
+                spec.preview_png(doc, os.path.join(rd, "preview.png"))
+                _replan_png(rd, rec, doc, cur, target)
+                _save_round(out, rd, rec, "planned: toolpath.json, preview.png and replan.png written; not executed yet")
+                m = state.scans[-1]
+                log(f"round {r}: amp {m['amp_ratio']:.3f}, corr {m['pattern_corr']:.4f} -> {k} pass(es) of "
+                    f"WA ({first['cx']:.0f},{first['cy']:.0f}) {first['wx']:.0f}x{first['wy']:.0f} {spec.orient_txt(first)} N {first['N']}, "
+                    f"passes {' '.join('L>R' if d == 'l2r' else 'R>L' for d in tps[0]['pass_directions'])}  [{getattr(state, 'block_reason', '')}]")
+            if not gate:
+                if problem:
+                    state.stopped, state.reason = True, problem
+                    _save_round(out, rd, {**rec, "stop": state.reason}, "stopped before execution"); _record(out, {**rec, "stop": state.reason})
+                elif confirm and input(f"  execute round {r} ({rd}/preview.png)? [y/N] ").strip().lower() != "y":
+                    state.stopped, state.reason = True, "stopped_by_operator"
+                    _save_round(out, rd, {**rec, "stop": state.reason}, "not executed (operator)"); _record(out, {**rec, "stop": state.reason})
+                else:
+                    go = True
+                break
+            what = (f"controller stop: {ctrl_stop}; " if ctrl_stop else "") + (f"nothing executable ({problem})" if problem else f"{k} pass(es) proposed")
+            if problem:
+                log(f"round {r}: {what}")
+            _save_round(out, rd, {**rec, "operator_decisions": decisions}, f"awaiting the operator's decision: {what}")
+            d = _gate(rd, r, log); decisions.append(d); rec["operator_decisions"] = decisions
+            act = d.get("action")
+            if act == "stop":
+                state.stopped, state.reason = True, "stopped_by_operator"
+                _save_round(out, rd, {**rec, "stop": state.reason}, "not executed (operator)"); _record(out, {**rec, "stop": state.reason})
+                break
+            if act == "execute" and d.get("passes") is None and d.get("wa") is None:
+                if problem:
+                    log(f"[gate] round {r}: nothing executable to run ({problem}); give a block (replace) or stop")
+                    continue
+                go = True
+                break
+            if act in ("execute", "replace") and (d.get("wa") is not None or first is not None):
+                k = int(d.get("passes") or k or 1)
+                if d.get("wa") is not None:
+                    first = spec.normalise_wa({**d["wa"], "n": k})
+                rec.update({"chosen": first, "block_passes": k, "block_reason": f"operator: {json.dumps(d)}"})
+                continue                              # rebuilt and shown again; runs on a plain {"action": "execute"}
+            log(f"[gate] round {r}: decision not understood: {d}")
+        if not go:
+            break
         _save_round(out, rd, rec, "executing on the robot")
         caps, executed = plant.execute(doc, rd)
         state.record_executed(first, executed)

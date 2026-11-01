@@ -1,7 +1,7 @@
 param([string]$OutName = "sheet01", [string]$Target = "S1_t042_c4", [int]$N = 3, [int]$MaxPasses = 12,
       [switch]$Resume, [switch]$Confirm, [switch]$AskRadii, [switch]$Show,
       [string]$RobotCode = "", [switch]$AllowUnverifiedRobotCode,
-      [string]$Schema = "v5facts", [double]$MaxAngle = 0, [string]$Script = "", [string]$ManualWheel = "off")
+      [string]$Schema = "v5facts", [double]$MaxAngle = 0, [string]$Script = "", [string]$ManualWheel = "off", [switch]$Gate)
 # The closed loop on the Dobot cell. From the DESKTOP terminal the force monitors and (with -Show) his preview are visible:
 #   powershell -ExecutionPolicy Bypass -File C:\Users\"Ping Guo Lab"\robotpc_loop.ps1 -OutName sheet01 -Confirm -Show
 # -Confirm: the loop asks before every block; -AskRadii: his Rx/Rz prompt between passes; log = loops\<OutName>.log
@@ -25,6 +25,7 @@ $out = "$repo\loops\$OutName"
 $extra = @(); if ($Resume) { $extra += "--resume" }; if (-not $Confirm) { $extra += "--yes" }; if (-not $AskRadii) { $extra += "--auto-radii" }; if ($Show) { $extra += "--show-preview" }
 if ($Script) { $extra += @("--script", $Script) }
 if ($ManualWheel -ne "off") { $extra += @("--manual-wheel", $ManualWheel) }
+if ($Gate) { $extra += "--gate" }       # step mode: each round waits for loops\<OutName>\round_NN\decision.json
 $t0 = Get-Date
 & $py -m ew_loop.cli rigloop --plant dobot --robot-scripts $scripts --server http://localhost:8765 `
     --target "figures/rig/targets/$Target.npz" --out $out --calib "pc_post_processing/deliverable_092826/calibration results" `
