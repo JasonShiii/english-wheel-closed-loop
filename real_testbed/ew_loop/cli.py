@@ -196,6 +196,8 @@ def cmd_rigloop(a):
             sys.exit(f"the server runs profile {h.get('profile')}, this loop writes {profile.name} history (--schema)")
     else:
         planner = P.ModelPlanner(a.ckpt or MN.DEFAULT_CKPT, profile); print(f"model loaded in {planner.load_secs:.0f}s")
+    if a.controller == "server-final":
+        return _rigloop_final(a, sheet, profile)
     if a.plant == "replay":
         plant = L.ReplayPlant(a.replay_run)
     elif a.plant == "dobot":
@@ -213,8 +215,44 @@ def cmd_rigloop(a):
     return 0 if st.reason and st.reason.startswith(("converged", "script_done")) else 3
 
 
+def _rigloop_final(a, sheet, profile):
+    """rigloop --controller server-final (2026-11-02): loop_final.run_loop_final with the final controller service"""
+    from . import loop as L, measure as ME, loop_final as LF
+    from .final_client import FinalControllerClient
+    if not a.server:
+        sys.exit("--controller server-final needs --server URL of `serve-fields --controller final`")
+    if a.script or a.fixed_plan or a.gate or a.fake_fields:
+        sys.exit("--controller server-final runs without --script / --fixed-plan / --gate / --fake-fields")
+    client = FinalControllerClient(a.server)
+    h = client.health()
+    if not str(h.get("controller", "")).startswith("final"):
+        sys.exit(f"{a.server} is not a final-controller service: {h}")
+    measurer = None
+    if a.plant == "replay":
+        plant = L.ReplayPlant(a.replay_run)
+    elif a.plant == "dobot":
+        plant = L.DobotPlant(a.robot_scripts, python=a.robot_python, margin_top=a.margin_top, auto_radii=a.auto_radii,
+                             show_preview=a.show_preview, sheet=sheet, manual_wheel=a.manual_wheel)
+    elif a.plant == "simrig":
+        from .frames import HeightField
+        plant = LF.SimRigPlant(os.path.join(a.out, "sim_plant_cache"), HeightField.load(a.target), growth=a.sim_growth,
+                               core0=a.sim_core0, cores=a.sim_cores)
+    else:
+        plant = L.FilePlant(a.exchange, a.captures)
+    if a.plant != "simrig":
+        measurer = ME.RigMeasurer(calib_dir=a.calib)
+    st = LF.run_loop_final(a.out, sheet, a.target, client, plant, measurer=measurer, profile=profile, max_passes=a.max_passes,
+                           max_angle=a.max_angle, confirm=not a.yes, retakes=a.retakes, run_id=a.run_id, allow_no_sheet=a.allow_no_sheet,
+                           resume=a.resume)
+    return 0 if st.reason and st.reason.startswith("converged") else 3
+
+
 def cmd_serve_fields(a):
     from . import model_newsheet as MN
+    if a.controller == "final":                     # 2026-11-02: the paper's final controller as a service (final_controller.py)
+        from . import final_controller as FC
+        return FC.serve_final(host=a.host, port=a.port, planner_url=a.planner_url, root=a.root, core0=a.core0, cores=a.cores,
+                              ckpt=a.ckpt)
     profile = MN.NewsheetModel(pairs=a.pairs or MN.DEFAULT_PAIRS, data=a.data or MN.DEFAULT_DATA, schema=a.schema)
     P.serve_fields(a.ckpt or MN.DEFAULT_CKPT, profile, host=a.host, port=a.port)
 
@@ -291,10 +329,13 @@ def main(argv=None):
                                                             "glare hole inside the sheet (0 = never)")
     rl.add_argument("--allow-no-sheet", action="store_true", help="continue when the flat scan holds no sheet (dry runs without a sheet)")
     rl.add_argument("--fake-fields", help="dry run: folder of field_<c>.npz handed to the planner/controller after c passes, instead of the measured scans")
-    rl.add_argument("--plant", choices=["file", "replay", "dobot"], default="file")
+    rl.add_argument("--plant", choices=["file", "replay", "dobot", "simrig"], default="file",
+                    help="simrig: (server-final, ideas2 tests only) the paper's simulator plant with rig-like scans")
+    rl.add_argument("--sim-growth", type=float, default=1.0, help="(simrig) plant growth factor")
+    rl.add_argument("--sim-core0", type=int, default=136); rl.add_argument("--sim-cores", type=int, default=8)
     rl.add_argument("--robot-scripts", help="(dobot) Danish's Scripts folder (English-Wheel---DoBot-Files/Scripts)")
     rl.add_argument("--robot-python", help="(dobot) python for his driver (default: this one)")
-    rl.add_argument("--manual-wheel", choices=["off", "confirm", "auto"], default="off",
+    rl.add_argument("--manual-wheel", choices=["off", "confirm", "auto", "none"], default="off",
                     help="(dobot) the operator loads / unloads the wheel by hand at every block (robot_dobot/manual_wheel.py)")
     rl.add_argument("--auto-radii", action="store_true", help="(dobot) skip his Rx/Rz prompt between passes")
     rl.add_argument("--show-preview", action="store_true", help="(dobot) let his driver open its zigzag preview in the image viewer (desktop)")
@@ -313,12 +354,26 @@ def main(argv=None):
                                                                                     "must match serve-fields --schema")
     rl.add_argument("--n", type=int, default=3, help="most passes per block before re-planning")
     rl.add_argument("--max-passes", type=int, default=12); rl.add_argument("--yes", action="store_true"); rl.add_argument("--resume", action="store_true")
+    rl.add_argument("--controller", default="state", choices=("state", "server-final"),
+                    help="state (default): the planner service + state.py's block sizing and stops (loop.run_loop). server-final: the paper's "
+                         "final controller on `serve-fields --controller final` (--server URL), every round confirmed by the operator "
+                         "(accept / edit / skip + re-scan / stop, with a reason) unless --yes (loop_final.run_loop_final)")
+    rl.add_argument("--run-id", help="(server-final) the service's run id (default: <out folder>_<timestamp>; keep it to resume)")
     rl.set_defaults(f=cmd_rigloop)
 
     sf = sub.add_parser("serve-fields", help="model service for rigloop --server: takes height fields, returns the plan")
     sf.add_argument("--ckpt"); sf.add_argument("--host", default="0.0.0.0"); sf.add_argument("--port", type=int, default=8765)
     sf.add_argument("--pairs"); sf.add_argument("--data")
     sf.add_argument("--schema", default="v5facts", choices=("v5facts", "v8"), help="prompt schema of the checkpoint (v8 needs <data>/facts.json)")
+    sf.add_argument("--controller", default="plan", choices=("plan", "final"),
+                    help="plan (default): the planner only, POST /predict_fields. final: the paper's final controller (best-of-8 verifier, "
+                         "projection progress, matched-filter g_hat, tuned rule scheduler, shared stops), POST /final_step, for rigloop "
+                         "--controller server-final; needs --planner-url (planner_server.py of the augreal ck1170)")
+    sf.add_argument("--planner-url", help="(final) planner_server.py URL that samples the 8 plans")
+    sf.add_argument("--root", default=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "serve_final"),
+                    help="(final) folder of the per-run state and the warm-start simulation cache")
+    sf.add_argument("--core0", type=int, default=120, help="(final) first core of the simulator core block")
+    sf.add_argument("--cores", type=int, default=8, help="(final) simulator cores")
     sf.set_defaults(f=cmd_serve_fields)
 
     a = ap.parse_args(argv)

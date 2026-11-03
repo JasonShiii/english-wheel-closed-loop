@@ -84,6 +84,28 @@ def scan_table(root, rounds):
     return L + [""]
 
 
+def final_controller_table(rounds):
+    """rigloop --controller server-final (2026-11-02): per round the final controller's recommendation next to the operator's
+    choice, its reason and the block actually executed (empty for the default controller)"""
+    fr = [r for r in rounds if r.get("final_controller")]
+    if not fr:
+        return []
+    def blk(es):
+        return " then ".join(f"N {e['N']} x{e['n']}" + (f" ({e['cx']:.0f},{e['cy']:.0f}) {e['wx']:.0f}x{e['wy']:.0f}" if i == 0 else "")
+                             for i, e in enumerate(es or [])) or "-"
+    L = ["## Final controller: recommendation vs operator", "",
+         "a: projection progress, corr: shape correlation, both as the service reads the cleaned field; g_hat (support): the growth "
+         "identified so far; the executed block (not the recommendation) is what the history and the service get.", "",
+         "| round | a / corr | g_hat (support) | recommended | operator | reason | executed | service s |", "|---|---|---|---|---|---|---|---|"]
+    for r in fr:
+        f = r["final_controller"]; rc = f.get("recommendation") or {}; op = f.get("operator") or {}; m = f.get("measured") or {}; g = f.get("g_hat") or {}
+        rtxt = f"STOP: {rc['stop']['reason']}" if rc.get("stop") else f"{blk(rc.get('block'))} (b {rc.get('b')}, s {rc.get('s')}, N' {rc.get('N')})"
+        L.append(f"| {r['round']} | {m.get('amp_ratio')} / {m.get('pattern_corr')} | {g.get('g_hat')} ({g.get('support')}) | {rtxt} | "
+                 f"**{op.get('choice')}**" + (f" {json.dumps(op.get('edit'))}" if op.get("edit") else "") + f" | {op.get('reason') or ''} | "
+                 f"{blk(r.get('executed_block')) if r.get('executed_block') is not None else '-'} | {(f.get('timing') or {}).get('total_s')} |")
+    return L + [""]
+
+
 def main(root, quiet=False):
     root = os.path.abspath(root)
     st = json.load(open(os.path.join(root, "state.json"))) if os.path.exists(os.path.join(root, "state.json")) else {}
@@ -130,6 +152,7 @@ def main(root, quiet=False):
         L.append(f"| {rec['round']} | {b.get('amp_ratio')} / {b.get('pattern_corr')} | {plan_txt} | {ctrl}{stop} | {tp_txt} | {ro_txt} | {meas} |")
     L.append("")
     L += scan_table(root, rounds)
+    L += final_controller_table(rounds)
     for rec in rounds:
         r = rec["round"]; rd = os.path.join(root, f"round_{r:02d}")
         L.append(f"## Round {r}")

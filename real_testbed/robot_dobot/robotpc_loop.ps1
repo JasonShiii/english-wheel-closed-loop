@@ -1,7 +1,8 @@
 param([string]$OutName = "sheet01", [string]$Target = "S1_t042_c4", [int]$N = 3, [int]$MaxPasses = 12,
       [switch]$Resume, [switch]$Confirm, [switch]$AskRadii, [switch]$Show,
       [string]$RobotCode = "", [switch]$AllowUnverifiedRobotCode,
-      [string]$Schema = "v5facts", [double]$MaxAngle = 0, [string]$Script = "", [string]$ManualWheel = "off", [switch]$Gate)
+      [string]$Schema = "v5facts", [double]$MaxAngle = 0, [string]$Script = "", [string]$ManualWheel = "off", [switch]$Gate,
+      [string]$Controller = "state", [string]$Server = "", [switch]$AllowNoSheet, [int]$Retakes = 2)
 # The closed loop on the Dobot cell. From the DESKTOP terminal the force monitors and (with -Show) his preview are visible:
 #   powershell -ExecutionPolicy Bypass -File C:\Users\"Ping Guo Lab"\robotpc_loop.ps1 -OutName sheet01 -Confirm -Show
 # -Confirm: the loop asks before every block; -AskRadii: his Rx/Rz prompt between passes; log = loops\<OutName>.log
@@ -25,9 +26,16 @@ $out = "$repo\loops\$OutName"
 $extra = @(); if ($Resume) { $extra += "--resume" }; if (-not $Confirm) { $extra += "--yes" }; if (-not $AskRadii) { $extra += "--auto-radii" }; if ($Show) { $extra += "--show-preview" }
 if ($Script) { $extra += @("--script", $Script) }
 if ($ManualWheel -ne "off") { $extra += @("--manual-wheel", $ManualWheel) }
+if ($AllowNoSheet) { $extra += "--allow-no-sheet" }; if ($Retakes -ne 2) { $extra += @("--retakes", "$Retakes") }
+# -ManualWheel none: feasibility run, the wheel is never loaded (must read < 30 N); -AllowNoSheet: test panels of another size
 if ($Gate) { $extra += "--gate" }       # step mode: each round waits for loops\<OutName>\round_NN\decision.json
+# -Controller server-final (2026-11-02): the paper's final controller (serve-fields --controller final on ideas2, reverse tunnel
+#   ssh -N -R 8766:localhost:8766 "Ping Guo Lab@10.105.33.14"); use with -Confirm (accept / edit / skip / stop every round) and
+#   -Schema v8. Default -Controller state = the loop as before (state.py sizing, service on 8765). -Server overrides the URL.
+if ($Controller -ne "state") { $extra += @("--controller", $Controller) }
+$srv = if ($Server) { $Server } elseif ($Controller -eq "server-final") { "http://localhost:8766" } else { "http://localhost:8765" }
 $t0 = Get-Date
-& $py -m ew_loop.cli rigloop --plant dobot --robot-scripts $scripts --server http://localhost:8765 `
+& $py -m ew_loop.cli rigloop --plant dobot --robot-scripts $scripts --server $srv `
     --target "figures/rig/targets/$Target.npz" --out $out --calib "pc_post_processing/deliverable_092826/calibration results" `
     --clamp 12 --n $N --max-passes $MaxPasses --schema $Schema --max-angle $MaxAngle @extra 2>&1 | ForEach-Object { "$_" } | Tee-Object -FilePath "$out.log" -Append |
     Where-Object { $_ -notmatch "UserWarning|plt.show|fig, \(ax_f|generic_filter|_nd_image|RuntimeWarning|^\s*$" }

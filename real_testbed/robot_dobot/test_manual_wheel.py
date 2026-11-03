@@ -142,6 +142,17 @@ def main():
     s = compact(ev); print("stop:   ", " | ".join(s))
     assert err and "stopped by the operator" in err and "PASS BEGIN" not in s and s[-1] == "WAIT LOAD", (err, s)
     print(f"[ok] stop: run ended at the load wait, no pass, no further move ({err})")
+    # none (no-load feasibility run): no wait, the wheel is never loaded; a closed wheel stops the run before any pass
+    ev, mw, st, err = run(a.scripts, tpath, "none", lambda what, cell: None)
+    s = compact(ev); print("none:   ", " | ".join(s))
+    assert err is None and "WAIT LOAD" not in s and s.count("PASS BEGIN") == 3 and [e for e in s if e.startswith("SCAN")] == ["SCAN pointcloud_pass3"], (err, s)
+    assert [e["what"] for e in mw.events] == ["load skipped (no-load run)", "unload skipped (no-load run)"], mw.events
+    zf, zp, rtd = TCB.load(a.scripts); cell = LoadCell(); cell.f = 80.0
+    mw = MW.ManualWheel(cell, "none", 250.0, log=lambda *x: None)
+    try:
+        mw.load(); raise AssertionError("a closed wheel was accepted in a no-load run")
+    except RuntimeError as e:
+        print(f"[ok] none: no waits, load/unload skipped, 3 passes, one scan; 80 N refused ({e})")
     print("ALL MANUAL-WHEEL CHECKS PASSED")
 
 

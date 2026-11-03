@@ -301,9 +301,10 @@ def main():
     ap.add_argument("--auto-radii", action="store_true", help="no Rx/Rz prompt between passes (keep the current radii)")
     ap.add_argument("--show-preview", action="store_true", help="let his driver open its zigzag preview in the image viewer (desktop session)")
     ap.add_argument("--sheet-json", help="(baseline) the loop's sheet (frames.Sheet.to_dict) for run_info.txt")
-    ap.add_argument("--manual-wheel", choices=["off", "confirm", "auto"], default="off",
+    ap.add_argument("--manual-wheel", choices=["off", "confirm", "auto", "none"], default="off",
                     help="(run) the operator loads / unloads the wheel by hand, the motor is not used (manual_wheel.py): "
-                         "confirm = ENTER / resume.bat after each, auto = continue once the force is in the window")
+                         "confirm = ENTER / resume.bat after each, auto = continue once the force is in the window, "
+                         "none = never loaded (feasibility runs; the wheel must read < 30 N)")
     ap.add_argument("--start-direction", choices=["l2r", "r2l"], default="l2r",
                     help="direction of the block's first pass (his driver always starts left->right: r2l hands it the pivots reversed)")
     a = ap.parse_args()

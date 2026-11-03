@@ -7,7 +7,9 @@ read only) every 2 s. Load is accepted inside threshold ± LOAD_TOL_N, unload be
   confirm  the operator presses ENTER in the loop's terminal, or the file ~/EW_RESUME appears (resume.bat on the desktop,
            or created over ssh); accepted only when the force is in the window, otherwise it says so and keeps waiting
   auto     no input: continues once the force has stayed in the window for HOLD_S, after a COUNTDOWN_S warning
-In both: 's' + ENTER or the file ~/EW_STOP stops the run (robot still); MAX_WAIT_S without success stops it too."""
+In both: 's' + ENTER or the file ~/EW_STOP stops the run (robot still); MAX_WAIT_S without success stops it too.
+  none     feasibility runs (2026-11-02): the wheel is never loaded; every load / unload only checks that the load cell
+           reads below UNLOAD_MAX_N (the wheel really is open) and goes on, else the run stops with the robot still"""
 import os
 import sys
 import time
@@ -57,7 +59,7 @@ def _flag(path):
 
 class ManualWheel:
     def __init__(self, wf, mode, threshold_n, log=print, clock=time.monotonic, sleep=time.sleep):
-        assert mode in ("confirm", "auto"), mode
+        assert mode in ("confirm", "auto", "none"), mode
         self.wf, self.mode, self.target, self.log, self.clock, self.sleep = wf, mode, float(threshold_n), log, clock, sleep
         self.events, self.loaded = [], False
 
@@ -107,6 +109,10 @@ class ManualWheel:
         if retare:
             self.log("[manual wheel] taring the load cell: the wheel must be OPEN and untouched")
             self.wf._tare_wheel_force_sensor()
+        if self.mode == "none":
+            f = self._open_check("load")
+            self.events.append({"what": "load skipped (no-load run)", "force_N": round(f, 1), "retare": bool(retare)})
+            return 0
         lo, hi = self.target - LOAD_TOL_N, self.target + LOAD_TOL_N
         f, secs = self._wait("LOAD", lambda x: lo <= x <= hi, f"{lo:.0f}..{hi:.0f} N")
         self.events.append({"what": "load", "force_N": round(f, 1), "wait_s": round(secs, 1), "retare": bool(retare)}); self.loaded = True
@@ -115,10 +121,22 @@ class ManualWheel:
 
     def unload(self, frequency=None, pulse_count=None, robot=None):
         """replaces open_wheel_by_last_close_count: wait for the hand unload"""
+        if self.mode == "none":
+            f = self._open_check("unload")
+            self.events.append({"what": "unload skipped (no-load run)", "force_N": round(f, 1)})
+            return
         f, secs = self._wait("UNLOAD", lambda x: x < UNLOAD_MAX_N, f"< {UNLOAD_MAX_N:.0f} N")
         self.events.append({"what": "unload", "force_N": round(f, 1), "wait_s": round(secs, 1)}); self.loaded = False
         self.log(f"[manual wheel] unload accepted at {f:.1f} N after {secs:.0f} s")
 
+
+    def _open_check(self, what):
+        """no-load run: the wheel must be open (load cell below UNLOAD_MAX_N), else stop with the robot still"""
+        f = max(self.force() for _ in range(3))
+        if f >= UNLOAD_MAX_N:
+            raise RuntimeError(f"no-load run: the wheel reads {f:.0f} N at the {what} step (limit {UNLOAD_MAX_N:.0f} N); open it. The robot did not move")
+        self.log(f"[manual wheel] NO-LOAD run: {what} skipped, the wheel stays open ({f:.1f} N)")
+        return f
 
     def safety_unload(self, robot=None, frequency=None):
         """replaces unload_wheel_if_loaded (his exception path and the end of every run): never drives the motor; if the
