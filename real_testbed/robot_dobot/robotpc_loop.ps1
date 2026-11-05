@@ -2,7 +2,7 @@ param([string]$OutName = "sheet01", [string]$Target = "S1_t042_c4", [int]$N = 3,
       [switch]$Resume, [switch]$Confirm, [switch]$AskRadii, [switch]$Show,
       [string]$RobotCode = "", [switch]$AllowUnverifiedRobotCode,
       [string]$Schema = "v5facts", [double]$MaxAngle = 0, [string]$Script = "", [string]$ManualWheel = "off", [switch]$Gate,
-      [string]$Controller = "state", [string]$Server = "", [switch]$AllowNoSheet, [int]$Retakes = 2)
+      [string]$Controller = "state", [string]$Server = "", [switch]$AllowNoSheet, [int]$Retakes = 2, [string]$PlacementOffsets = "")
 # The closed loop on the Dobot cell. From the DESKTOP terminal the force monitors and (with -Show) his preview are visible:
 #   powershell -ExecutionPolicy Bypass -File C:\Users\"Ping Guo Lab"\robotpc_loop.ps1 -OutName sheet01 -Confirm -Show
 # -Confirm: the loop asks before every block; -AskRadii: his Rx/Rz prompt between passes; log = loops\<OutName>.log
@@ -28,7 +28,8 @@ if ($Script) { $extra += @("--script", $Script) }
 if ($ManualWheel -ne "off") { $extra += @("--manual-wheel", $ManualWheel) }
 if ($AllowNoSheet) { $extra += "--allow-no-sheet" }; if ($Retakes -ne 2) { $extra += @("--retakes", "$Retakes") }
 # -ManualWheel none: feasibility run, the wheel is never loaded (must read < 30 N); -AllowNoSheet: test panels of another size
-if ($Gate) { $extra += "--gate" }       # step mode: each round waits for loops\<OutName>\round_NN\decision.json
+if ($Gate) { $extra += "--gate" }
+if ($PlacementOffsets) { $extra += @("--placement-offsets", $PlacementOffsets) }   # e.g. '{"45":[12,12],"-45":[-20,-10]}' (2026-11-04 calibration)       # step mode: each round waits for loops\<OutName>\round_NN\decision.json
 # -Controller server-final (2026-11-02): the paper's final controller (serve-fields --controller final on ideas2, reverse tunnel
 #   ssh -N -R 8766:localhost:8766 "Ping Guo Lab@10.105.33.14"); use with -Confirm (accept / edit / skip / stop every round) and
 #   -Schema v8. Default -Controller state = the loop as before (state.py sizing, service on 8765). -Server overrides the URL.

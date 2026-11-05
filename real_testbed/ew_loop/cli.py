@@ -211,7 +211,8 @@ def cmd_rigloop(a):
         print(f"FAKE measurement: the planner and the controller see {a.fake_fields}/field_<passes>.npz; the real scans are saved and measured for the record")
     st = L.run_loop(a.out, sheet, a.target, planner, plant, n=a.n, max_passes=a.max_passes, allow_rot90=False,
                     confirm=not a.yes, robust=True, resume=a.resume, measurer=measurer, profile=profile,
-                    script=script, allow_no_sheet=a.allow_no_sheet, max_angle=a.max_angle, retakes=a.retakes, gate=a.gate)
+                    script=script, allow_no_sheet=a.allow_no_sheet, max_angle=a.max_angle, retakes=a.retakes, gate=a.gate,
+                    placement_offsets={int(k): tuple(v) for k, v in json.loads(a.placement_offsets).items()} if a.placement_offsets else None)
     return 0 if st.reason and st.reason.startswith(("converged", "script_done")) else 3
 
 
@@ -323,6 +324,8 @@ def main(argv=None):
     rl.add_argument("--script", help="JSON list of {wa, passes}: run these blocks as listed, no planner, no controller decisions (dry runs)")
     rl.add_argument("--max-angle", type=float, default=0.0, help="largest |area angle| (deg) executed, schema v8 tilted areas; "
                                                                 "0 = refused. Set only to what Danish has cleared (ROTATION_RANGE_2026-10-29.md)")
+    rl.add_argument("--placement-offsets", help='placement calibration per tilt angle, JSON {"45": [dx, dy], "-45": [dx, dy]} mm: the commanded '
+                                                 "area is the model's area shifted by it; the model is not told (loop._physical_wa)")
     rl.add_argument("--gate", action="store_true", help="step mode: every round's proposal waits for round_NN/decision.json "
                                                        "(execute / change passes / replace the block / stop), written by the operator")
     rl.add_argument("--retakes", type=int, default=2, help="scan again (scan pose only, ~20 s) at most this often when a scan has a "

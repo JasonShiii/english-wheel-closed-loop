@@ -433,6 +433,18 @@ def _measure_with_retakes(measure, pass_dir, plant, round_dir, sheet, retakes, l
     return best[0], best[1], rec
 
 
+def _physical_wa(wa, offsets):
+    """placement calibration (2026-11-04): the area the ROBOT is commanded = the model's area shifted by a fixed offset per
+    tilt angle (offsets: {angle_deg: (dx, dy)} mm, sheet frame), measured on the first Demo B sheet where the bumps of the
+    +-45 deg areas landed ~(-12, -12) / (+21, +10) mm from the simulated ones (a rotation-centre error of the sheet
+    turn). The model's plan, history and prompt keep its own area; the shift is recorded in round.json / toolpath.json."""
+    th = spec.orientation(wa)[1]
+    o = (offsets or {}).get(int(th))
+    if not o:
+        return wa, None
+    return {**wa, "cx": round(float(wa["cx"]) + o[0], 1), "cy": round(float(wa["cy"]) + o[1], 1)}, [float(o[0]), float(o[1])]
+
+
 def _gate(rd, r, log, poll=2.0):
     """step mode (2026-11-01): wait for the operator's decision on this round's proposal, the file round_NN/decision.json
     (written over ssh): {"action": "execute"} | {"action": "execute", "passes": k} | {"action": "replace", "wa": {cx, cy, wx,
@@ -576,7 +588,7 @@ def _record(out, rec):
 def run_loop(out, sheet, target_path, planner, plant, n=3, max_passes=30, schema=P.DEFAULT_SCHEMA,
              feed_dir_cam=None, camera=S.DEFAULT_CAMERA, up_toward_camera=True, allow_rot90=False,
              confirm=True, step=2.0, robust=True, resume=False, log=None, measurer=None, profile=None,
-             script=None, allow_no_sheet=False, max_angle=0.0, retakes=2, gate=False):
+             script=None, allow_no_sheet=False, max_angle=0.0, retakes=2, gate=False, placement_offsets=None):
     """measurer (measure.RigMeasurer) + profile (model_newsheet.NewsheetModel) = the rig path (2026-10-28):
     captures are folders measured at the scan pose, the planner's plan_fields() takes the fields; the
     fields are cropped and plane-removed by the measurer, so no clamp-band mask is applied here.
@@ -586,7 +598,8 @@ def run_loop(out, sheet, target_path, planner, plant, n=3, max_passes=30, schema
     retakes: scans retaken at most this often when a raw field has a glare hole (_measure_with_retakes); a flat scan that
     keeps its hole stops the loop (the sheet mask is built from it), a later scan goes on with its best take.
     gate: step mode, every round's proposal (plan + controller, or the controller's stop) waits for the operator's decision
-    (_gate): execute it, change its passes, replace it by another block, or stop; a changed block is shown again first."""
+    (_gate): execute it, change its passes, replace it by another block, or stop; a changed block is shown again first.
+    placement_offsets: {angle_deg: (dx, dy)} applied to the commanded area only (_physical_wa); the model is not told."""
     log = log or (lambda *a: print(*a, flush=True))
     out = os.path.abspath(out)                     # the plants run tools from other folders
     os.makedirs(out, exist_ok=True)
@@ -706,7 +719,10 @@ def run_loop(out, sheet, target_path, planner, plant, n=3, max_passes=30, schema
         while True:                                   # the proposal; in step mode shown again after every change by the operator
             problem = "plan_failure" if first is None else ("next_pass_would_overshoot" if k == 0 else None)
             if problem is None:
-                tps, problems = spec.plan_to_toolpaths([{**first, "n": k}], sheet, allow_rot90=allow_rot90, max_angle=max_angle)
+                phys, off = _physical_wa({**first, "n": k}, placement_offsets)
+                rec["placement_offset"] = off
+                rec["physical_wa"] = {kk: phys[kk] for kk in ("cx", "cy", "wx", "wy", "N")} if off else None
+                tps, problems = spec.plan_to_toolpaths([phys], sheet, allow_rot90=allow_rot90, max_angle=max_angle)
                 if problems:
                     problem = f"not_executable: {problems[0][1]}"
             if problem is None:
@@ -715,7 +731,8 @@ def run_loop(out, sheet, target_path, planner, plant, n=3, max_passes=30, schema
                                    "start_direction": tps[0]["start_direction"], "pass_directions": tps[0]["pass_directions"],
                                    "n_pivots": len(tps[0]["pivots_xy_mm"]), "pivots_xy_mm": tps[0]["pivots_xy_mm"]}
                 src = "operator's block" if decisions else ("scripted block" if script is not None else "first entry of the model plan")
-                doc = spec.toolpath_doc(sheet, tps, note=f"round {r}: {src}, {k} pass(es), pass 1 {tps[0]['start_direction']}")
+                doc = spec.toolpath_doc(sheet, tps, note=f"round {r}: {src}, {k} pass(es), pass 1 {tps[0]['start_direction']}"
+                                                         + (f"; placement offset {off} mm applied to the model's area ({first['cx']}, {first['cy']})" if off else ""))
                 spec.write_toolpath_json(os.path.join(rd, "toolpath.json"), doc)
                 spec.preview_png(doc, os.path.join(rd, "preview.png"))
                 _replan_png(rd, rec, doc, cur, target)
@@ -723,7 +740,8 @@ def run_loop(out, sheet, target_path, planner, plant, n=3, max_passes=30, schema
                 m = state.scans[-1]
                 log(f"round {r}: amp {m['amp_ratio']:.3f}, corr {m['pattern_corr']:.4f} -> {k} pass(es) of "
                     f"WA ({first['cx']:.0f},{first['cy']:.0f}) {first['wx']:.0f}x{first['wy']:.0f} {spec.orient_txt(first)} N {first['N']}, "
-                    f"passes {' '.join('L>R' if d == 'l2r' else 'R>L' for d in tps[0]['pass_directions'])}  [{getattr(state, 'block_reason', '')}]")
+                    + (f"commanded at ({phys['cx']:.0f},{phys['cy']:.0f}) [placement offset {off}], " if off else "")
+                    + f"passes {' '.join('L>R' if d == 'l2r' else 'R>L' for d in tps[0]['pass_directions'])}  [{getattr(state, 'block_reason', '')}]")
             if not gate:
                 if problem:
                     state.stopped, state.reason = True, problem
