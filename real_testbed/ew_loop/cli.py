@@ -216,6 +216,16 @@ def cmd_rigloop(a):
     return 0 if st.reason and st.reason.startswith(("converged", "script_done")) else 3
 
 
+def _test_area(s):
+    """--test-physical-area: JSON {"cx","cy","wx","wy"} or the quote-free 'cx,cy,wx,wy' (ssh -> cmd -> PowerShell eats quotes)"""
+    if not s:
+        return None
+    if s.strip().startswith("{"):
+        return json.loads(s)
+    cx, cy, wx, wy = (float(v) for v in s.split(","))
+    return {"cx": cx, "cy": cy, "wx": wx, "wy": wy}
+
+
 def _rigloop_final(a, sheet, profile):
     """rigloop --controller server-final (2026-11-02): loop_final.run_loop_final with the final controller service"""
     from . import loop as L, measure as ME, loop_final as LF
@@ -244,7 +254,7 @@ def _rigloop_final(a, sheet, profile):
         measurer = ME.RigMeasurer(calib_dir=a.calib)
     st = LF.run_loop_final(a.out, sheet, a.target, client, plant, measurer=measurer, profile=profile, max_passes=a.max_passes,
                            max_angle=a.max_angle, confirm=not a.yes, retakes=a.retakes, run_id=a.run_id, allow_no_sheet=a.allow_no_sheet,
-                           resume=a.resume, test_physical_area=json.loads(a.test_physical_area) if a.test_physical_area else None)
+                           resume=a.resume, test_physical_area=_test_area(a.test_physical_area))
     return 0 if st.reason and st.reason.startswith("converged") else 3
 
 
