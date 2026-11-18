@@ -196,8 +196,13 @@ def _as_hf(fld):
 
 # ---------------------------------------------------------------------------------------------------------------------------
 def run_loop_final(out, sheet, target_path, client, plant, measurer=None, profile=None, max_passes=12, max_angle=0.0, confirm=True,
-                   retakes=2, run_id=None, allow_no_sheet=False, resume=False, log=None):
+                   retakes=2, run_id=None, allow_no_sheet=False, resume=False, log=None, test_physical_area=None):
+    """test_physical_area (2026-11-18, LOOP TESTS ONLY, never for a scored sheet): {cx, cy, wx, wy} replaces the area the
+    ROBOT rolls (N, passes, rot of the controller's block are kept) so a scrap panel with its clamps in the way can carry a
+    full planner -> controller -> robot -> scan loop; the controller's own block stays in the model history."""
     log = log or (lambda *a: print(*a, flush=True))
+    if test_physical_area:
+        log(f"!!! TEST MODE: the robot rolls the area {test_physical_area} instead of the controller's area (history unchanged)")
     out = os.path.abspath(out); os.makedirs(out, exist_ok=True)
     rig = measurer is not None
     L._SHEET_FOR_FIGS[0] = sheet
@@ -294,7 +299,12 @@ def run_loop_final(out, sheet, target_path, client, plant, measurer=None, profil
         caps_all, executed_all, executed_ops, stop_now = [], 0, [], None
         for i, (e, pd) in enumerate(zip(block, parts)):
             os.makedirs(pd, exist_ok=True)
-            tps, problems = spec.plan_to_toolpaths([e], sheet, allow_rot90=False, max_angle=max_angle)
+            e_robot = e
+            if test_physical_area:
+                e_robot = {**e, **{k: float(test_physical_area[k]) for k in ("cx", "cy", "wx", "wy")}}
+                rec["test_physical_area"] = {"robot_entry": e_robot, "model_entry": e}
+                log(f"  !!! TEST MODE: robot rolls {_entry_txt(e_robot)} (the model's block {_entry_txt(e)} is what the history records)")
+            tps, problems = spec.plan_to_toolpaths([e_robot], sheet, allow_rot90=False, max_angle=max_angle)
             if problems:
                 stop_now = f"not_executable: {problems[0][1]}"; break
             spec.set_directions(tps[0], getattr(plant, "next_dir", "l2r"))
