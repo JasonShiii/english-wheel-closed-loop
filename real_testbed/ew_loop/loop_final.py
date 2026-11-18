@@ -34,7 +34,12 @@ def _entry_txt(e):
 
 def show_recommendation(resp, log):
     m, g, st = resp["measured"], resp["g_hat"], resp.get("state", {})
-    log(f"  [final controller] measured: progress a {m['amp_ratio']:.3f} (projection), corr {m['pattern_corr']:.4f}; "
+    dual = "belief" in resp                                    # 2026-11-13: the RSS main-line service (dual_controller.py)
+    if dual:
+        b, r = resp["belief"], resp.get("measured_raw") or {}
+        log(f"  [main line] reading (denoised span) {m['amp_ratio']:.3f} (raw {r.get('amp_ratio', float('nan')):.3f}), corr {m['pattern_corr']:.4f}; "
+            f"amplitude belief {b['a_mu']:.3f} +- {b['a_sd']:.3f}; growth belief g {b['g_hat']:.3f} (log-sd {b['belief_sd']:.3f}, {b['n_ratio_obs']} ratio(s))")
+    log(f"  [final controller] measured: progress a {m['amp_ratio']:.3f} ({'denoised span' if dual else 'projection'}), corr {m['pattern_corr']:.4f}; "
         f"g_hat {g['g_hat']:.3f} (support {g['support']}{', last ratio %.3f' % g['ratio'] if 'ratio' in g else ''}"
         f"{'; ' + g['skipped'] if g.get('skipped') else ''}); passes {st.get('exec_passes')}/{st.get('max_passes')}")
     plan = (resp.get("plan") or {}).get("was") or []
@@ -55,7 +60,8 @@ def show_recommendation(resp, log):
         log(f"  [final controller] RECOMMENDED BLOCK: {' then '.join(_entry_txt(e) for e in b['entries'])}  "
             f"(b {b['b']}, s {b['s']}, N' {b['N']} of plan N {b['N_plan']}; rule: {b['rule']['rule']} plan {b['rule']['plan']}"
             f"{'; ' + '; '.join(b['rule']['conversions']) if b['rule'].get('conversions') else ''})")
-        log(f"    forecast (nominal x g_hat^kappa = {fc['g_used']}): predicted a after 0..{fc['k_fc']} full passes {fc['pred_amp_full_passes']}")
+        log(f"    forecast (nominal x {'E[g]' if dual else 'g_hat^kappa'} = {fc['g_used']}): predicted a after 0..{fc['k_fc']} full passes {fc['pred_amp_full_passes']}"
+            + (f"; P(over) of the smallest step {b_['p_over_min']}, shield admissible {b_['shield_admissible']}" if dual and (b_ := b['rule']) else ""))
     log(f"    service timing: {resp.get('timing')}")
 
 

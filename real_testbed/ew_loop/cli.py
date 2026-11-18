@@ -254,6 +254,10 @@ def cmd_serve_fields(a):
         from . import final_controller as FC
         return FC.serve_final(host=a.host, port=a.port, planner_url=a.planner_url, root=a.root, core0=a.core0, cores=a.cores,
                               ckpt=a.ckpt)
+    if a.controller == "dual":                      # 2026-11-13: the RSS 2027 main line (belief + shield + RL) as a service (dual_controller.py)
+        from . import dual_controller as DCS
+        return DCS.serve_dual(host=a.host, port=a.port, planner_url=a.planner_url, root=a.root, core0=a.core0, cores=a.cores,
+                              ckpt=a.ckpt, policy=a.policy, kind=a.solver, reading_sd_factor=a.reading_sd_factor)
     profile = MN.NewsheetModel(pairs=a.pairs or MN.DEFAULT_PAIRS, data=a.data or MN.DEFAULT_DATA, schema=a.schema)
     P.serve_fields(a.ckpt or MN.DEFAULT_CKPT, profile, host=a.host, port=a.port)
 
@@ -368,11 +372,15 @@ def main(argv=None):
     sf.add_argument("--ckpt"); sf.add_argument("--host", default="0.0.0.0"); sf.add_argument("--port", type=int, default=8765)
     sf.add_argument("--pairs"); sf.add_argument("--data")
     sf.add_argument("--schema", default="v5facts", choices=("v5facts", "v8"), help="prompt schema of the checkpoint (v8 needs <data>/facts.json)")
-    sf.add_argument("--controller", default="plan", choices=("plan", "final"),
+    sf.add_argument("--controller", default="plan", choices=("plan", "final", "dual"),
                     help="plan (default): the planner only, POST /predict_fields. final: the paper's final controller (best-of-8 verifier, "
                          "projection progress, matched-filter g_hat, tuned rule scheduler, shared stops), POST /final_step, for rigloop "
-                         "--controller server-final; needs --planner-url (planner_server.py of the augreal ck1170)")
-    sf.add_argument("--planner-url", help="(final) planner_server.py URL that samples the 8 plans")
+                         "--controller server-final; needs --planner-url (planner_server.py of the augreal ck1170). dual: the RSS 2027 main line "
+                         "(denoised span reading, growth + amplitude beliefs, unified stops, RL under the chance-constraint shield), same client contract")
+    sf.add_argument("--planner-url", help="(final / dual) planner_server.py URL that samples the 8 plans")
+    sf.add_argument("--policy", help="(dual) policy.pt of the RL solver (default: the frozen N2 policy)")
+    sf.add_argument("--solver", default="rl", choices=("rl", "mpc", "fixed1", "fixed2"), help="(dual) block solver; rl = the main line")
+    sf.add_argument("--reading-sd-factor", type=float, default=None, help="(dual) reading sd x this on the rig (RIG_RISK_REVIEW 3.2); default 1 = the simulator runs")
     sf.add_argument("--root", default=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "serve_final"),
                     help="(final) folder of the per-run state and the warm-start simulation cache")
     sf.add_argument("--core0", type=int, default=120, help="(final) first core of the simulator core block")
