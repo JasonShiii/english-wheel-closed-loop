@@ -43,8 +43,14 @@ class Chain:
         xyz = xyz.astype(np.float32); g = np.all((xyz > GATE[:, 0]) & (xyz < GATE[:, 1]), axis=1)
         return xyz[g], ids[g]
 
+    RANSAC_ITER, RANSAC_MAX_PLANES = 2000, 30      # 2026-11-19: were 600 / 10. With the camera rig raised, the robot wrist
+    # and the AprilTag board sit inside the GATE; that curved, dense surface spawns many same-normal pseudo-planes that filled
+    # the 10 candidate slots before the sheet's plane appeared, and the rectangle was fitted on the wrist (bare sheet,
+    # pretest 19:20). The pick is still the best rectangle score; more candidates only make sure the sheet is among them.
+
     @staticmethod
-    def ransac_planes(P, n_iter=600, tol=1.5, seed=0):
+    def ransac_planes(P, n_iter=None, tol=1.5, seed=0, max_planes=None):
+        n_iter = n_iter or Chain.RANSAC_ITER; max_planes = max_planes or Chain.RANSAC_MAX_PLANES
         rng = np.random.default_rng(seed); sub = P[rng.choice(len(P), min(60000, len(P)), replace=False)]
         found = []
         for _ in range(n_iter):
@@ -56,7 +62,7 @@ class Chain:
         for cnt, a, n in found:
             if all(abs(n @ m) < 0.996 or abs((a - q) @ m) > 15 for _, q, m in planes):
                 planes.append((cnt, a, n))
-            if len(planes) == 10:
+            if len(planes) == max_planes:
                 break
         return planes
 
