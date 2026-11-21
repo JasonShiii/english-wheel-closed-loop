@@ -16,7 +16,7 @@ import time
 
 LOAD_TOL_N = 20.0
 UNLOAD_MAX_N = 30.0
-HOLD_S, COUNTDOWN_S, MAX_WAIT_S, PRINT_S = 3.0, 5.0, 600.0, 2.0
+HOLD_S, COUNTDOWN_S, MAX_WAIT_S, PRINT_S = 3.0, 5.0, 1800.0, 2.0     # 2026-11-21: 600 -> 1800 s (review time at the gate)
 HOME = os.path.expanduser("~")
 RESUME, STOP = os.path.join(HOME, "EW_RESUME"), os.path.join(HOME, "EW_STOP")
 

@@ -18,6 +18,7 @@ simulator at a growth factor with the warm-start chain, every scan the rig-like 
 """
 import json
 import os
+import shutil
 import time
 from dataclasses import replace
 
@@ -317,6 +318,8 @@ def run_loop_final(out, sheet, target_path, client, plant, measurer=None, profil
                 rec["toolpath"] = {"id": tps[0]["id"], "passes": int(e["n"]), "robot": tps[0]["robot"], "ours": tps[0].get("ours"),
                                    "start_direction": tps[0]["start_direction"], "pass_directions": tps[0]["pass_directions"],
                                    "n_pivots": len(tps[0]["pivots_xy_mm"])}
+                if pd != rd:                                      # two-part block: the figure reads round_NN/preview.png (2026-11-21)
+                    shutil.copyfile(os.path.join(pd, "preview.png"), os.path.join(rd, "preview.png"))
                 try:
                     L._replan_png(rd, {**rec, "block_passes": rec["block_passes"]}, doc, cur, target)
                 except Exception as ex:                               # figures never stop the loop
