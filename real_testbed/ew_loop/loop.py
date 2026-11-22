@@ -440,6 +440,14 @@ def _physical_wa(wa, offsets):
     turn). The model's plan, history and prompt keep its own area; the shift is recorded in round.json / toolpath.json."""
     th = spec.orientation(wa)[1]
     o = (offsets or {}).get(int(th))
+    if not o and offsets and int(th) != 0:
+        # 2026-11-21 (user decision, S4): a tilt between 0 and a calibrated angle of the same sign gets that angle's offset
+        # scaled by |theta| / |calibrated angle| (0 deg -> no offset; +30 with {45: (12, 12)} -> (8, 8)); an extrapolation,
+        # the calibration was measured at +-45 only
+        same = [a for a in offsets if a != 0 and (a > 0) == (th > 0) and abs(th) <= abs(a)]
+        if same:
+            a = min(same, key=abs); f = abs(th) / abs(a)
+            o = (round(offsets[a][0] * f, 1), round(offsets[a][1] * f, 1))
     if not o:
         return wa, None
     return {**wa, "cx": round(float(wa["cx"]) + o[0], 1), "cy": round(float(wa["cy"]) + o[1], 1)}, [float(o[0]), float(o[1])]
