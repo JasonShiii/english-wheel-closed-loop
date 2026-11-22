@@ -206,6 +206,8 @@ def cmd_rigloop(a):
     else:
         plant = L.FilePlant(a.exchange, a.captures)
     measurer = ME.RigMeasurer(calib_dir=a.calib)
+    if getattr(a, "start_dir", None):                      # 2026-11-21: continue a session's pass alternation (e.g. after a probe pass)
+        plant.next_dir = a.start_dir; print(f"first pass direction forced to {a.start_dir} (continues the previous run's alternation)")
     if a.fake_fields:
         measurer = ME.FakeFieldMeasurer(measurer, a.fake_fields)
         print(f"FAKE measurement: the planner and the controller see {a.fake_fields}/field_<passes>.npz; the real scans are saved and measured for the record")
@@ -362,6 +364,7 @@ def main(argv=None):
     rl.add_argument("--allow-no-sheet", action="store_true", help="continue when the flat scan holds no sheet (dry runs without a sheet)")
     rl.add_argument("--placement-probe", action="store_true", help="(server-final, device layer) the first block on each area rolls pass 1 alone, scans, "
                     "moves that angle's --placement-offsets entry by (target bump - landed bump), then rolls the remaining passes; the controller is not told")
+    rl.add_argument("--start-dir", choices=["l2r", "r2l"], help="direction of the first pass (default l2r): continue the alternation of a previous run")
     rl.add_argument("--probe-first-part", action="store_true", help="with --placement-probe: a multi-part first block on an area keeps its whole first "
                     "part (e.g. N 12 x2) instead of 1 pass, then scans")
     rl.add_argument("--test-physical-area", help='LOOP TESTS ONLY (server-final): JSON {"cx","cy","wx","wy"} the robot rolls instead of the '
