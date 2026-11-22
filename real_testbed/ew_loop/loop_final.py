@@ -257,7 +257,7 @@ def _placement_probe_update(placement_offsets, probed, e, e_robot, before, after
 # ---------------------------------------------------------------------------------------------------------------------------
 def run_loop_final(out, sheet, target_path, client, plant, measurer=None, profile=None, max_passes=12, max_angle=0.0, confirm=True,
                    retakes=2, run_id=None, allow_no_sheet=False, resume=False, log=None, test_physical_area=None,
-                   placement_offsets=None, placement_probe=False):
+                   placement_offsets=None, placement_probe=False, probe_first_part=False):
     """test_physical_area (2026-11-18, LOOP TESTS ONLY, never for a scored sheet): {cx, cy, wx, wy} replaces the area the
     ROBOT rolls (N, passes, rot of the controller's block are kept) so a scrap panel with its clamps in the way can carry a
     full planner -> controller -> robot -> scan loop; the controller's own block stays in the model history.
@@ -368,13 +368,15 @@ def run_loop_final(out, sheet, target_path, client, plant, measurer=None, profil
         if placement_probe and not test_physical_area and int(spec.orientation(block[0])[1]) not in probed:
             th0 = int(spec.orientation(block[0])[1]); probed.add(th0)
             if len(block) > 1 or int(block[0]["n"]) > 1:
-                rec["placement_probe_cap"] = {"recommended_block": [dict(x) for x in block], "executed_block": [{**block[0], "n": 1}], "angle": th0,
+                keep = dict(block[0]) if (probe_first_part and len(block) > 1) else {**block[0], "n": 1}
+                rec["placement_probe_cap"] = {"recommended_block": [dict(x) for x in block], "executed_block": [keep], "angle": th0,
+                                              "first_part_kept": bool(probe_first_part and len(block) > 1),
                                               "note": "device-layer placement probe (user, 2026-11-21): the first block on a new area is capped to 1 pass; "
                                                       "the operator checks where its bump landed and may correct that angle's offset before the next block, "
                                                       "which the controller plans from the scan as usual"}
-                log(f"  placement probe: first block on the {th0:+} deg area capped to 1 pass (controller recommended "
-                    f"{' then '.join(_entry_txt(x) for x in block)}); the landing is checked at the next gate")
-                block = [{**block[0], "n": 1}]
+                log(f"  placement probe: first block on the {th0:+} deg area capped to {_entry_txt(keep)} (controller recommended "
+                    f"{' then '.join(_entry_txt(x) for x in block)}); the landing is checked at the next scan")
+                block = [keep]
         rec.update({"chosen": block[0], "block_passes": sum(int(x["n"]) for x in block),
                     "block_reason": f"final controller ({dec['choice']} by the operator)" + (f": {dec['reason']}" if dec.get("reason") else "")})
         # ---- execute the block (one toolpath per part: the robot side takes one toolpath per call)

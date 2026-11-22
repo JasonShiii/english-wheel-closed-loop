@@ -269,7 +269,7 @@ def _rigloop_final(a, sheet, profile):
     st = LF.run_loop_final(a.out, sheet, a.target, client, plant, measurer=measurer, profile=profile, max_passes=a.max_passes,
                            max_angle=a.max_angle, confirm=not a.yes, retakes=a.retakes, run_id=a.run_id, allow_no_sheet=a.allow_no_sheet,
                            resume=a.resume, test_physical_area=_test_area(a.test_physical_area),
-                           placement_offsets=_placement_offsets(a.placement_offsets), placement_probe=bool(a.placement_probe))
+                           placement_offsets=_placement_offsets(a.placement_offsets), placement_probe=bool(a.placement_probe), probe_first_part=bool(a.probe_first_part))
     return 0 if st.reason and st.reason.startswith("converged") else 3
 
 
@@ -362,6 +362,8 @@ def main(argv=None):
     rl.add_argument("--allow-no-sheet", action="store_true", help="continue when the flat scan holds no sheet (dry runs without a sheet)")
     rl.add_argument("--placement-probe", action="store_true", help="(server-final, device layer) the first block on each area rolls pass 1 alone, scans, "
                     "moves that angle's --placement-offsets entry by (target bump - landed bump), then rolls the remaining passes; the controller is not told")
+    rl.add_argument("--probe-first-part", action="store_true", help="with --placement-probe: a multi-part first block on an area keeps its whole first "
+                    "part (e.g. N 12 x2) instead of 1 pass, then scans")
     rl.add_argument("--test-physical-area", help='LOOP TESTS ONLY (server-final): JSON {"cx","cy","wx","wy"} the robot rolls instead of the '
                                                  "controller's area; N / passes / history stay the controller's (scrap panels)")
     rl.add_argument("--fake-fields", help="dry run: folder of field_<c>.npz handed to the planner/controller after c passes, instead of the measured scans")
