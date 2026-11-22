@@ -1,0 +1,7 @@
+{
+ "source_run": "/home/xiangyu/English_wheel/real_testbed/trials/2026-11-21_rss_physical_runs/S4_demoB_steel_closed",
+ "source_file": "/home/xiangyu/English_wheel/real_testbed/trials/2026-11-21_rss_physical_runs/S4_demoB_steel_closed/round_01/final_controller_response.json",
+ "verifier_picked": 2,
+ "plan_raw": "{\"plan\": [{\"wa\": {\"center_xy\": [34.8, -3.5], \"size_wh\": [50.4, 44.6], \"angle\": -45}, \"zigzag\": {\"rot\": 0, \"N\": 14}, \"hits\": 6}, {\"wa\": {\"center_xy\": [-38.2, -13.8], \"size_wh\": [50.4, 48.0], \"angle\": 30}, \"zigzag\": {\"rot\": 0, \"N\": 14}, \"hits\": 4}]}",
+ "total_passes": 10
+}
