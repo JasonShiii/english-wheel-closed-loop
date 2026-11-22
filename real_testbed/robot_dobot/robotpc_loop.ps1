@@ -31,7 +31,7 @@ if ($AllowNoSheet) { $extra += "--allow-no-sheet" }; if ($Retakes -ne 2) { $extr
 # -ManualWheel none: feasibility run, the wheel is never loaded (must read < 30 N); -AllowNoSheet: test panels of another size
 if ($Gate) { $extra += "--gate" }
 if ($TestPhysicalArea) { $extra += @("--test-physical-area", $TestPhysicalArea) }   # LOOP TESTS on scrap only: '{"cx":0,"cy":0,"wx":60,"wy":60}'
-if ($PlacementOffsets) { $extra += @("--placement-offsets", $PlacementOffsets) }   # e.g. '{"45":[12,12],"-45":[-20,-10]}' (2026-11-04 calibration)       # step mode: each round waits for loops\<OutName>\round_NN\decision.json
+if ($PlacementOffsets) { $extra += @("--placement-offsets", $PlacementOffsets) }   # e.g. 45:12:12,-45:-20:-10 (quote-free) or JSON (2026-11-04 calibration)       # step mode: each round waits for loops\<OutName>\round_NN\decision.json
 # -Controller server-final (2026-11-02): the paper's final controller (serve-fields --controller final on ideas2, reverse tunnel
 #   ssh -N -R 8766:localhost:8766 "Ping Guo Lab@10.105.33.14"); use with -Confirm (accept / edit / skip / stop every round) and
 #   -Schema v8. Default -Controller state = the loop as before (state.py sizing, service on 8765). -Server overrides the URL.

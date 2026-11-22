@@ -212,8 +212,22 @@ def cmd_rigloop(a):
     st = L.run_loop(a.out, sheet, a.target, planner, plant, n=a.n, max_passes=a.max_passes, allow_rot90=False,
                     confirm=not a.yes, robust=True, resume=a.resume, measurer=measurer, profile=profile,
                     script=script, allow_no_sheet=a.allow_no_sheet, max_angle=a.max_angle, retakes=a.retakes, gate=a.gate,
-                    placement_offsets={int(k): tuple(v) for k, v in json.loads(a.placement_offsets).items()} if a.placement_offsets else None)
+                    placement_offsets=_placement_offsets(a.placement_offsets))
     return 0 if st.reason and st.reason.startswith(("converged", "script_done")) else 3
+
+
+def _placement_offsets(s):
+    """--placement-offsets: JSON {"45": [dx, dy], "-45": [dx, dy]} or the quote-free '45:12:12,-45:-20:-10' (angle:dx:dy;
+    ssh -> cmd -> PowerShell eats quotes, 2026-11-21) -> {angle: (dx, dy)} or None"""
+    if not s:
+        return None
+    if s.strip().startswith("{"):
+        return {int(k): tuple(float(x) for x in v) for k, v in json.loads(s).items()}
+    out = {}
+    for item in s.split(","):
+        ang, dx, dy = item.strip().split(":")
+        out[int(ang)] = (float(dx), float(dy))
+    return out
 
 
 def _test_area(s):
@@ -254,7 +268,8 @@ def _rigloop_final(a, sheet, profile):
         measurer = ME.RigMeasurer(calib_dir=a.calib)
     st = LF.run_loop_final(a.out, sheet, a.target, client, plant, measurer=measurer, profile=profile, max_passes=a.max_passes,
                            max_angle=a.max_angle, confirm=not a.yes, retakes=a.retakes, run_id=a.run_id, allow_no_sheet=a.allow_no_sheet,
-                           resume=a.resume, test_physical_area=_test_area(a.test_physical_area))
+                           resume=a.resume, test_physical_area=_test_area(a.test_physical_area),
+                           placement_offsets=_placement_offsets(a.placement_offsets))
     return 0 if st.reason and st.reason.startswith("converged") else 3
 
 

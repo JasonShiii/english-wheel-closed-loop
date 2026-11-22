@@ -197,11 +197,18 @@ def _as_hf(fld):
 
 # ---------------------------------------------------------------------------------------------------------------------------
 def run_loop_final(out, sheet, target_path, client, plant, measurer=None, profile=None, max_passes=12, max_angle=0.0, confirm=True,
-                   retakes=2, run_id=None, allow_no_sheet=False, resume=False, log=None, test_physical_area=None):
+                   retakes=2, run_id=None, allow_no_sheet=False, resume=False, log=None, test_physical_area=None,
+                   placement_offsets=None):
     """test_physical_area (2026-11-18, LOOP TESTS ONLY, never for a scored sheet): {cx, cy, wx, wy} replaces the area the
     ROBOT rolls (N, passes, rot of the controller's block are kept) so a scrap panel with its clamps in the way can carry a
-    full planner -> controller -> robot -> scan loop; the controller's own block stays in the model history."""
+    full planner -> controller -> robot -> scan loop; the controller's own block stays in the model history.
+    placement_offsets (2026-11-21, cell calibration, as loop.run_loop): {angle_deg: (dx, dy)} mm, sheet frame; the area the
+    ROBOT rolls = the controller's area shifted by the offset of its tilt angle (11-04 calibration of the sheet-turn
+    rotation-centre error). Robot command only: the planner, the scheduler, the history sent to the service and every
+    figure of the model's plan keep the controller's own area; the shift is recorded in round.json and toolpath.json."""
     log = log or (lambda *a: print(*a, flush=True))
+    if placement_offsets:
+        log(f"placement calibration (robot command only, the controller is not told): {placement_offsets}")
     if test_physical_area:
         log(f"!!! TEST MODE: the robot rolls the area {test_physical_area} instead of the controller's area (history unchanged)")
     out = os.path.abspath(out); os.makedirs(out, exist_ok=True)
@@ -305,11 +312,22 @@ def run_loop_final(out, sheet, target_path, client, plant, measurer=None, profil
                 e_robot = {**e, **{k: float(test_physical_area[k]) for k in ("cx", "cy", "wx", "wy")}}
                 rec["test_physical_area"] = {"robot_entry": e_robot, "model_entry": e}
                 log(f"  !!! TEST MODE: robot rolls {_entry_txt(e_robot)} (the model's block {_entry_txt(e)} is what the history records)")
+            off = None
+            if placement_offsets:
+                e_phys, off = L._physical_wa(e_robot, placement_offsets)
+                rec.setdefault("placement_offsets", []).append({"part": i + 1, "offset_mm": off, "model_entry": dict(e),
+                                                                "robot_entry": dict(e_phys)})
+                if off:
+                    log(f"  placement calibration: robot area centre ({e_robot['cx']}, {e_robot['cy']}) -> ({e_phys['cx']}, {e_phys['cy']}), offset {off} mm")
+                    e_robot = e_phys
+                else:
+                    log(f"  placement calibration: no offset for this area's angle ({_entry_txt(e_robot)})")
             tps, problems = spec.plan_to_toolpaths([e_robot], sheet, allow_rot90=False, max_angle=max_angle)
             if problems:
                 stop_now = f"not_executable: {problems[0][1]}"; break
             spec.set_directions(tps[0], getattr(plant, "next_dir", "l2r"))
-            doc = spec.toolpath_doc(sheet, tps, note=f"round {r} part {i + 1}/{len(block)}: final controller, {dec['choice']}, {e['n']} pass(es)")
+            doc = spec.toolpath_doc(sheet, tps, note=f"round {r} part {i + 1}/{len(block)}: final controller, {dec['choice']}, {e['n']} pass(es)"
+                                    + (f"; placement offset {off} mm applied to the controller's area ({e['cx']}, {e['cy']})" if off else ""))
             spec.write_toolpath_json(os.path.join(pd, "toolpath.json"), doc)
             spec.preview_png(doc, os.path.join(pd, "preview.png"))
             rec.setdefault("toolpaths", []).append({"part": i + 1, "id": tps[0]["id"], "passes": int(e["n"]), "robot": tps[0]["robot"],
